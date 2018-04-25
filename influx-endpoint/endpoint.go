@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"regexp"
 	"time"
@@ -90,19 +91,24 @@ type duration struct {
 	time.Duration
 }
 
+func (d duration) toTimeDuration() time.Duration {
+	return time.Duration(d.Duration)
+}
+
 // HTTPInfluxServerConfig is the struct to
 // map influx servers from config items
 type HTTPInfluxServerConfig struct {
-	ServerName       string
+	ServerName       string `toml:"server_name"`
 	Alias            string
-	DBregex          string `toml:db_regex`
+	DBregex          string `toml:"db_regex"`
 	Username         string
 	Password         string
 	Precision        string
-	WriteConsistency string
+	WriteConsistency string `toml:"write_consistency"`
 	Port             int
 	Timeout          duration
-	UnsafeSSL        bool `toml:unsafe_ssl`
+	UnsafeSSL        bool `toml:"unsafe_ssl"`
+	Secure           bool
 }
 
 func (d *duration) UnmarshalText(text []byte) error {
@@ -113,8 +119,27 @@ func (d *duration) UnmarshalText(text []byte) error {
 
 // NewHTTPInfluxServerFromConfig creates a new
 // config from config
-func NewHTTPInfluxServerFromConfig(config string) (*HTTPInfluxServerConfig, error) {
+func NewHTTPInfluxServerParseConfig(config string) (*HTTPInfluxServerConfig, error) {
 	var conf HTTPInfluxServerConfig
 	_, err := toml.Decode(config, &conf)
 	return &conf, err
+}
+
+func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer {
+	new := &HTTPInfluxServer{}
+	new.Alias = c.Alias
+	new.Dbregex = c.DBregex
+	new.Config = &client.HTTPConfig{}
+	if c.Secure {
+		new.Config.Addr = "https://"
+	} else {
+		new.Config.Addr = "http://"
+	}
+	new.Config.Addr = fmt.Sprintf("%s%s:%d", new.Config.Addr, c.ServerName, c.Port)
+	new.Config.InsecureSkipVerify = c.UnsafeSSL
+	new.Config.Username = c.Username
+	new.Config.Password = c.Password
+	new.Config.Timeout = c.Timeout.toTimeDuration()
+
+	return new
 }

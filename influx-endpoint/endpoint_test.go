@@ -106,9 +106,15 @@ func TestNewHTTPInfluxServerFromConfig(t *testing.T) {
 	port = 9090
 	timeout = "1m"
 	unsafe_ssl = true
+	secure = false
 	`
-	_, err := endpoint.NewHTTPInfluxServerFromConfig(config)
+	conf, err := endpoint.NewHTTPInfluxServerParseConfig(config)
 	if err != nil {
 		t.Fatalf("Error parsing config: %v", err)
 	}
+	server := endpoint.NewHTTPInfluxServerFromConfig(conf)
+	if server.Alias != "test" || server.Config.Addr != "http://test:9090" || server.Dbregex != ".*" || server.Config.InsecureSkipVerify != true {
+		t.Fatalf("Error building server from config")
+	}
+
 }
