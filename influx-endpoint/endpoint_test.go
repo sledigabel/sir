@@ -11,25 +11,25 @@ import (
 )
 
 func TestNewHTTPInfluxServerBasic(t *testing.T) {
-	_, err := endpoint.NewHTTPInfluxServer("test", "test", &client.HTTPConfig{})
+	_, err := endpoint.NewHTTPInfluxServer("test", []string{"test"}, &client.HTTPConfig{})
 	if err != nil {
 		t.Errorf("Error creating basic Influx Endpoint: %v", err)
 	}
 }
 
 func TestNewHTTPInfluxServerEmptyAlias(t *testing.T) {
-	_, err := endpoint.NewHTTPInfluxServer("", "test", &client.HTTPConfig{})
+	_, err := endpoint.NewHTTPInfluxServer("", []string{"test"}, &client.HTTPConfig{})
 	if err == nil {
 		t.Errorf("Error, should fail for empty alias: %v", err)
 	}
 }
 
 func TestNewHTTPInfluxServerEmptyDBRegex(t *testing.T) {
-	i, err := endpoint.NewHTTPInfluxServer("test", "", &client.HTTPConfig{})
+	i, err := endpoint.NewHTTPInfluxServer("test", []string{""}, &client.HTTPConfig{})
 	if err != nil {
 		t.Errorf("Error, should not fail for empty regex: %v", err)
 	}
-	if i.Dbregex != ".*" {
+	if len(i.Dbregex) != 1 && i.Dbregex[0] != ".*" {
 		t.Errorf("Error, Dbregex should have been replaced by a .*: %v", err)
 	}
 }
@@ -41,16 +41,16 @@ func TestGetInfluxServerbyDBBasic(t *testing.T) {
 	list = make([]*endpoint.HTTPInfluxServer, 3)
 	list[0], _ = endpoint.NewHTTPInfluxServer(
 		"test1",
-		".*",
+		[]string{".*"},
 		&client.HTTPConfig{})
 
 	list[1], _ = endpoint.NewHTTPInfluxServer(
 		"test2",
-		"SHOULDNEVERMATCH",
+		[]string{"SHOULDNEVERMATCH"},
 		&client.HTTPConfig{})
 	list[2], _ = endpoint.NewHTTPInfluxServer(
 		"test3",
-		"[a-z]*",
+		[]string{"[a-z]*"},
 		&client.HTTPConfig{})
 
 	filtered := endpoint.GetInfluxServerbyDB("try", list)
@@ -74,7 +74,7 @@ func TestNewHTTPInfluxServerConnect(t *testing.T) {
 	ts := emptyTestServer()
 	defer ts.Close()
 	c, err := endpoint.NewHTTPInfluxServer(
-		"test", "test", &client.HTTPConfig{Addr: ts.URL})
+		"test", []string{"test"}, &client.HTTPConfig{Addr: ts.URL})
 	if err != nil {
 		t.Errorf("Couldn't connect on empty config: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestNewHTTPInfluxServerFromConfig(t *testing.T) {
 	config := `
 	server_name = "test"
 	alias = "test"
-	db_regex = ".*"
+	db_regex = [".*"]
 	username = "seb"
 	password = "S3kR3t"
 	precision = "superfine"
@@ -113,7 +113,7 @@ func TestNewHTTPInfluxServerFromConfig(t *testing.T) {
 		t.Fatalf("Error parsing config: %v", err)
 	}
 	server := endpoint.NewHTTPInfluxServerFromConfig(conf)
-	if server.Alias != "test" || server.Config.Addr != "http://test:9090" || server.Dbregex != ".*" || server.Config.InsecureSkipVerify != true {
+	if server.Alias != "test" || server.Config.Addr != "http://test:9090" || server.Dbregex[0] != ".*" || server.Config.InsecureSkipVerify != true {
 		t.Fatalf("Error building server from config")
 	}
 

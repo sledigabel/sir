@@ -25,7 +25,7 @@ const (
 // HTTPInfluxServer type
 type HTTPInfluxServer struct {
 	Alias   string
-	Dbregex string
+	Dbregex []string
 	Client  client.Client
 	Status  ServerState
 	Config  *client.HTTPConfig
@@ -33,13 +33,13 @@ type HTTPInfluxServer struct {
 
 // NewHTTPInfluxServer is a
 // constructor of HTTPInfluxServer
-func NewHTTPInfluxServer(alias string, dbregex string, httpConfig *client.HTTPConfig) (*HTTPInfluxServer, error) {
+func NewHTTPInfluxServer(alias string, dbregex []string, httpConfig *client.HTTPConfig) (*HTTPInfluxServer, error) {
 
 	if len(alias) == 0 {
 		return &HTTPInfluxServer{}, errors.New("Alias cannot be empty")
 	}
 	if len(dbregex) == 0 {
-		dbregex = ".*"
+		dbregex = []string{".*"}
 	}
 
 	// adding the user agent if empty
@@ -79,8 +79,11 @@ func (server *HTTPInfluxServer) Close() {
 func GetInfluxServerbyDB(db string, servers []*HTTPInfluxServer) []*HTTPInfluxServer {
 	var ret []*HTTPInfluxServer
 	for _, server := range servers {
-		if match, err := regexp.MatchString(server.Dbregex, db); match && err == nil {
-			ret = append(ret, server)
+		for _, reg := range server.Dbregex {
+			if match, err := regexp.MatchString(reg, db); match && err == nil {
+				ret = append(ret, server)
+				break
+			}
 		}
 	}
 	return ret
@@ -100,7 +103,7 @@ func (d duration) toTimeDuration() time.Duration {
 type HTTPInfluxServerConfig struct {
 	ServerName       string `toml:"server_name"`
 	Alias            string
-	DBregex          string `toml:"db_regex"`
+	DBregex          []string `toml:"db_regex"`
 	Username         string
 	Password         string
 	Precision        string
@@ -117,7 +120,7 @@ func (d *duration) UnmarshalText(text []byte) error {
 	return err
 }
 
-// NewHTTPInfluxServerFromConfig creates a new
+// NewHTTPInfluxServerParseConfig creates a new
 // config from config
 func NewHTTPInfluxServerParseConfig(config string) (*HTTPInfluxServerConfig, error) {
 	var conf HTTPInfluxServerConfig
@@ -125,6 +128,8 @@ func NewHTTPInfluxServerParseConfig(config string) (*HTTPInfluxServerConfig, err
 	return &conf, err
 }
 
+// NewHTTPInfluxServerFromConfig creates a
+// server from a given config struct
 func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer {
 	new := &HTTPInfluxServer{}
 	new.Alias = c.Alias
