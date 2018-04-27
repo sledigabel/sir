@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -19,16 +20,18 @@ const (
 	ServerStateInactive  ServerState = 0
 	ServerStateActive    ServerState = 1
 	ServerStateSuspended ServerState = 2
+	ServerStateFailed    ServerState = 3
 	UserAgent            string      = "SIR"
 )
 
 // HTTPInfluxServer type
 type HTTPInfluxServer struct {
-	Alias   string
-	Dbregex []string
-	Client  client.Client
-	Status  ServerState
-	Config  *client.HTTPConfig
+	Alias    string
+	Dbregex  []string
+	Client   client.Client
+	Status   ServerState
+	Config   *client.HTTPConfig
+	Shutdown chan struct{}
 }
 
 // NewHTTPInfluxServer is a
@@ -48,10 +51,11 @@ func NewHTTPInfluxServer(alias string, dbregex []string, httpConfig *client.HTTP
 	}
 
 	return &HTTPInfluxServer{
-		Alias:   alias,
-		Dbregex: dbregex,
-		Config:  httpConfig,
-		Status:  ServerStateActive,
+		Alias:    alias,
+		Dbregex:  dbregex,
+		Config:   httpConfig,
+		Status:   ServerStateActive,
+		Shutdown: make(chan struct{}),
 	}, nil
 }
 
@@ -70,7 +74,10 @@ func (server *HTTPInfluxServer) Connect() error {
 
 // Close is the closing helper
 func (server *HTTPInfluxServer) Close() {
-	server.Client.Close()
+	// Close is idempotent; only actually close when it needs to
+	if server.Client != nil {
+		server.Client.Close()
+	}
 	server.Status = ServerStateInactive
 }
 
@@ -112,6 +119,7 @@ type HTTPInfluxServerConfig struct {
 	Timeout          duration
 	UnsafeSSL        bool `toml:"unsafe_ssl"`
 	Secure           bool
+	Enable           bool
 }
 
 func (d *duration) UnmarshalText(text []byte) error {
@@ -134,6 +142,9 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 	new := &HTTPInfluxServer{}
 	new.Alias = c.Alias
 	new.Dbregex = c.DBregex
+	if !c.Enable {
+		new.Status = ServerStateSuspended
+	}
 	new.Config = &client.HTTPConfig{}
 	if c.Secure {
 		new.Config.Addr = "https://"
@@ -145,6 +156,30 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 	new.Config.Username = c.Username
 	new.Config.Password = c.Password
 	new.Config.Timeout = c.Timeout.toTimeDuration()
+	new.Shutdown = make(chan struct{})
 
 	return new
+}
+
+// Run is the main loop
+func (server *HTTPInfluxServer) Run(wg *sync.WaitGroup) {
+
+	if server.Status != ServerStateSuspended {
+		server.Connect()
+	}
+
+	// TODO: Add good start and watchdog logic
+
+MAINLOOP:
+	for {
+		select {
+		case <-server.Shutdown:
+			// triggering shutdown
+			log.Printf("Received shutdown for server %v", server.Alias)
+			server.Close()
+			break MAINLOOP
+		}
+	}
+
+	wg.Done()
 }

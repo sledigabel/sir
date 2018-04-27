@@ -3,6 +3,8 @@ package endpoint
 import (
 	"errors"
 	"fmt"
+	"log"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 )
@@ -10,6 +12,8 @@ import (
 // HTTPInfluxServerMgr is the struct
 // that manages multiple endpoints
 type HTTPInfluxServerMgr struct {
+	wg        sync.WaitGroup
+	Shutdown  chan struct{}
 	index     map[string][]*HTTPInfluxServer
 	Endpoints map[string]*HTTPInfluxServer
 }
@@ -20,6 +24,7 @@ func NewHTTPInfluxServerMgr() *HTTPInfluxServerMgr {
 	m := HTTPInfluxServerMgr{}
 	m.Endpoints = make(map[string]*HTTPInfluxServer)
 	m.index = make(map[string][]*HTTPInfluxServer)
+	m.Shutdown = make(chan struct{})
 	return &m
 }
 
@@ -69,9 +74,8 @@ func (mgr *HTTPInfluxServerMgr) GetServerPerName(s string) (*HTTPInfluxServer, e
 // all servers in Endpoints
 func (mgr *HTTPInfluxServerMgr) StartAllServers() error {
 	for _, s := range mgr.Endpoints {
-		if err := s.Connect(); err != nil {
-			return err
-		}
+		mgr.wg.Add(1)
+		go s.Run(&mgr.wg)
 	}
 	return nil
 }
@@ -80,6 +84,30 @@ func (mgr *HTTPInfluxServerMgr) StartAllServers() error {
 // servers in Endpoints
 func (mgr *HTTPInfluxServerMgr) StopAllServers() {
 	for _, s := range mgr.Endpoints {
-		s.Close()
+		s.Shutdown <- struct{}{}
 	}
+	mgr.wg.Wait()
+}
+
+// Run is the main loop
+func (mgr *HTTPInfluxServerMgr) Run(wg *sync.WaitGroup) {
+
+	err := mgr.StartAllServers()
+	if err != nil {
+		log.Printf("Caught expection while starting servers: %v", err)
+	}
+
+MAINLOOP:
+	for {
+		select {
+		case <-mgr.Shutdown:
+			// triggering shutdown
+			mgr.StopAllServers()
+			mgr.wg.Wait()
+			break MAINLOOP
+		}
+	}
+	log.Print("Closing mgr")
+	wg.Done()
+
 }

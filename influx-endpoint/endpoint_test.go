@@ -3,6 +3,7 @@ package endpoint_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -117,4 +118,26 @@ func TestNewHTTPInfluxServerFromConfig(t *testing.T) {
 		t.Fatalf("Error building server from config")
 	}
 
+}
+
+func TestHTTPInfluxServerRun(t *testing.T) {
+
+	var wg sync.WaitGroup
+	ts := emptyTestServer()
+	defer ts.Close()
+	c, err := endpoint.NewHTTPInfluxServer(
+		"test", []string{"test"}, &client.HTTPConfig{Addr: ts.URL})
+	if err != nil {
+		t.Errorf("Couldn't connect on empty config: %v", err)
+	}
+	wg.Add(1)
+	go c.Run(&wg)
+	// wait 5s to simulate some activity
+
+	time.Sleep(1 * time.Second)
+	// sending shutdown
+	t.Log("Sending shutdown msg")
+	c.Shutdown <- struct{}{}
+	wg.Wait()
+	t.Log("Completed shutdown")
 }
