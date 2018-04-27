@@ -32,6 +32,8 @@ type HTTPInfluxServer struct {
 	Status   ServerState
 	Config   *client.HTTPConfig
 	Shutdown chan struct{}
+	Post     chan *client.BatchPoints
+	Response chan error
 }
 
 // NewHTTPInfluxServer is a
@@ -56,6 +58,8 @@ func NewHTTPInfluxServer(alias string, dbregex []string, httpConfig *client.HTTP
 		Config:   httpConfig,
 		Status:   ServerStateActive,
 		Shutdown: make(chan struct{}),
+		Post:     make(chan *client.BatchPoints),
+		Response: make(chan error),
 	}, nil
 }
 
@@ -157,6 +161,7 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 	new.Config.Password = c.Password
 	new.Config.Timeout = c.Timeout.toTimeDuration()
 	new.Shutdown = make(chan struct{})
+	new.Post = make(chan *client.BatchPoints)
 
 	return new
 }
@@ -178,6 +183,9 @@ MAINLOOP:
 			log.Printf("Received shutdown for server %v", server.Alias)
 			server.Close()
 			break MAINLOOP
+		case <-server.Post:
+			// go to the void
+			server.Response <- nil
 		}
 	}
 
