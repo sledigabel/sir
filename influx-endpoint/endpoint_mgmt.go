@@ -74,8 +74,14 @@ func (mgr *HTTPInfluxServerMgr) GetServerPerName(s string) (*HTTPInfluxServer, e
 // all servers in Endpoints
 func (mgr *HTTPInfluxServerMgr) StartAllServers() error {
 	for _, s := range mgr.Endpoints {
-		mgr.wg.Add(1)
-		go s.Run(&mgr.wg)
+		go func(h *HTTPInfluxServer) {
+			mgr.wg.Add(1)
+			err := h.Run()
+			if err != nil {
+				log.Printf("An error occured with endpoint %v: %v", h.Alias, err)
+			}
+			mgr.wg.Done()
+		}(s)
 	}
 	return nil
 }

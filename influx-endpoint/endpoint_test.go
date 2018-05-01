@@ -131,7 +131,10 @@ func TestHTTPInfluxServerRun(t *testing.T) {
 		t.Errorf("Couldn't connect on empty config: %v", err)
 	}
 	wg.Add(1)
-	go c.Run(&wg)
+	go func() {
+		c.Run()
+		wg.Done()
+	}()
 	// wait 5s to simulate some activity
 
 	time.Sleep(1 * time.Second)

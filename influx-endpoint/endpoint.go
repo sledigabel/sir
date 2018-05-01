@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"regexp"
-	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -167,7 +166,7 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 }
 
 // Run is the main loop
-func (server *HTTPInfluxServer) Run(wg *sync.WaitGroup) {
+func (server *HTTPInfluxServer) Run() error {
 
 	if server.Status != ServerStateSuspended {
 		server.Connect()
@@ -189,5 +188,5 @@ MAINLOOP:
 		}
 	}
 
-	wg.Done()
+	return nil
 }

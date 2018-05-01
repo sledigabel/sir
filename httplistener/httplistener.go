@@ -83,9 +83,8 @@ func (h *HTTP) toString() string {
 func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	log.Printf("%v", h)
 	if h.DebugConnections {
-		log.Printf("Connection: [%v] [%v] [%v] [%v] ", r.Method, r.URL.Path, r.ContentLength, r.Host)
+		log.Printf("Connection: %v [%v %v] (%v)", r.RemoteAddr, r.Method, r.URL.RequestURI(), r.ContentLength)
 	}
 
 	if r.URL.Path == "/ping" && (r.Method == "GET" || r.Method == "HEAD") {
@@ -94,8 +93,13 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.URL.Path == "/query" && r.Method == "GET" {
+		jsonError(w, http.StatusForbidden, "queries not allowed")
+		return
+	}
+
 	// TODO
-	// if r.URL.Path == "/status" {
+	// if r.URL.Path == "/stats" {
 
 	// }
 
