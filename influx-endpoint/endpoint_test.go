@@ -1,6 +1,9 @@
 package endpoint_test
 
 import (
+	"fmt"
+	"io/ioutil"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -65,6 +68,8 @@ func TestGetInfluxServerbyDBBasic(t *testing.T) {
 
 func emptyTestServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := ioutil.ReadAll(r.Body)
+		log.Printf("Received: %v\nContent: %v", r, string(b))
 		time.Sleep(50 * time.Millisecond)
 		w.Header().Set("X-Influxdb-Version", "x.x")
 	}))
@@ -138,6 +143,53 @@ func TestHTTPInfluxServerRun(t *testing.T) {
 	// wait 5s to simulate some activity
 
 	time.Sleep(1 * time.Second)
+	// sending shutdown
+	t.Log("Sending shutdown msg")
+	c.Shutdown <- struct{}{}
+	wg.Wait()
+	t.Log("Completed shutdown")
+}
+
+func createBatch() client.BatchPoints {
+	// Create a new point batch
+	bp, _ := client.NewBatchPoints(client.BatchPointsConfig{})
+	bp.SetDatabase("BumbleBeeTuna")
+	bp.SetPrecision("ms")
+
+	// Create a point and add to batch
+	tags := map[string]string{"cpu": "cpu-total"}
+	fields := map[string]interface{}{
+		"idle":   10.1,
+		"system": 53.3,
+		"user":   46.6,
+	}
+	pt, err := client.NewPoint("cpu_usage", tags, fields, time.Now())
+	if err != nil {
+		fmt.Println("Error: ", err.Error())
+	}
+	bp.AddPoint(pt)
+	return bp
+}
+
+func TestEndpointWrite(t *testing.T) {
+	var wg sync.WaitGroup
+	ts := emptyTestServer()
+	defer ts.Close()
+	c, err := endpoint.NewHTTPInfluxServer(
+		"test", []string{"test"}, &client.HTTPConfig{Addr: ts.URL})
+	if err != nil {
+		t.Errorf("Couldn't connect on empty config: %v", err)
+	}
+	wg.Add(1)
+	go func() {
+		c.Run()
+		wg.Done()
+	}()
+	// wait 5s to simulate some activity
+
+	time.Sleep(1 * time.Second)
+	t.Log("Sending some points")
+	c.Post <- createBatch()
 	// sending shutdown
 	t.Log("Sending shutdown msg")
 	c.Shutdown <- struct{}{}
