@@ -2,7 +2,6 @@ package httplistener
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -15,8 +14,6 @@ func jsonError(w http.ResponseWriter, code int, message string) {
 	w.WriteHeader(code)
 	w.Write([]byte(data))
 }
-
-var ErrBufferFull = errors.New("retry buffer full")
 
 var bufPool = sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
 

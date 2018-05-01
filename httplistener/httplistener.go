@@ -2,6 +2,8 @@ package httplistener
 
 import (
 	"compress/gzip"
+	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"time"
@@ -22,10 +24,13 @@ type HTTP struct {
 	DefaultRP   string
 	Timeout     int
 
-	State    int32
-	Listener net.Listener
+	State            int32
+	Listener         net.Listener
+	Debug            bool
+	DebugConnections bool
 }
 
+// HTTPConf is the basic config structure for HTTP
 type HTTPConf struct {
 	Addr            string
 	Certificate     string
@@ -40,8 +45,48 @@ type responseData struct {
 	Body            []byte
 }
 
+// NewHTTP is the builder for HTTP
+func NewHTTP() *HTTP {
+	// arbitrary values
+	h := &HTTP{
+		Addr:             "localhost:8186",
+		Certificate:      "",
+		Timeout:          60,
+		Debug:            false,
+		DebugConnections: false,
+	}
+	return h
+}
+
+// NewHTTPWithParameters is a parameterised builder for HTTP
+func NewHTTPWithParameters(addr string, cert string, rp string, timeout int) *HTTP {
+	if rp == "" {
+		rp = defaultRP
+	}
+	return &HTTP{
+		Addr:             addr,
+		Certificate:      cert,
+		DefaultRP:        rp,
+		Timeout:          timeout,
+		Debug:            false,
+		DebugConnections: false,
+	}
+}
+
+func (h *HTTP) toString() string {
+	if h.Certificate != "" {
+		return fmt.Sprintf("https://%v", h.Addr)
+	}
+	return fmt.Sprintf("http://%v", h.Addr)
+}
+
 func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+
+	log.Printf("%v", h)
+	if h.DebugConnections {
+		log.Printf("Connection: [%v] [%v] [%v] [%v] ", r.Method, r.URL.Path, r.ContentLength, r.Host)
+	}
 
 	if r.URL.Path == "/ping" && (r.Method == "GET" || r.Method == "HEAD") {
 		w.Header().Add("X-InfluxDB-Version", "relay")
@@ -96,11 +141,8 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// the default would be nanosecond if precision isn't specified.
 	precision := queryParams.Get("precision")
-	if precision == "" {
-		jsonError(w, http.StatusBadRequest, "missing parameter: precision")
-		return
-	}
 
 	// parse the points
 	// points, err := models.ParsePointsWithPrecision(bodyBuf.Bytes(), start, precision)
@@ -112,6 +154,7 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
+	w.Header().Add("X-InfluxDB-Version", "relay")
 	return
 }
