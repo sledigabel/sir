@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/BurntSushi/toml"
+	"github.com/influxdata/influxdb/models"
 )
 
 // HTTPInfluxServerMgr is the struct
@@ -84,6 +85,19 @@ func (mgr *HTTPInfluxServerMgr) StartAllServers() error {
 		}(s)
 	}
 	return nil
+}
+
+func (mgr *HTTPInfluxServerMgr) Stats() (models.Points, error) {
+	pts := make(models.Points, len(mgr.Endpoints))
+	var err error
+	for _, s := range mgr.Endpoints {
+		pt, err := s.Stats()
+		if err != nil {
+			break
+		}
+		pts = append(pts, pt)
+	}
+	return pts, err
 }
 
 // StopAllServers triggers a stop on all

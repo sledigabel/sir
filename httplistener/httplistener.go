@@ -98,11 +98,6 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO
-	// if r.URL.Path == "/stats" {
-
-	// }
-
 	// we only accept writes
 	if r.URL.Path != "/write" {
 		jsonError(w, http.StatusNotFound, "invalid endpoint")

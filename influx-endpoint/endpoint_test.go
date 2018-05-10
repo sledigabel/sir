@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/influxdata/influxdb/client/v2"
+	"github.com/influxdata/influxdb/models"
 	"github.com/sledigabel/sir/influx-endpoint"
 )
 
@@ -157,17 +158,17 @@ func createBatch() client.BatchPoints {
 	bp.SetPrecision("ms")
 
 	// Create a point and add to batch
-	tags := map[string]string{"cpu": "cpu-total"}
+	tags := models.NewTags(map[string]string{"cpu": "cpu-total"})
 	fields := map[string]interface{}{
 		"idle":   10.1,
 		"system": 53.3,
 		"user":   46.6,
 	}
-	pt, err := client.NewPoint("cpu_usage", tags, fields, time.Now())
+	pt, err := models.NewPoint("cpu_usage", tags, fields, time.Now())
 	if err != nil {
 		fmt.Println("Error: ", err.Error())
 	}
-	bp.AddPoint(pt)
+	bp.AddPoint(client.NewPointFrom(pt))
 	return bp
 }
 
@@ -177,6 +178,7 @@ func TestEndpointWrite(t *testing.T) {
 	defer ts.Close()
 	c, err := endpoint.NewHTTPInfluxServer(
 		"test", []string{"test"}, &client.HTTPConfig{Addr: ts.URL})
+	c.PingFreq = 100 * time.Millisecond
 	if err != nil {
 		t.Errorf("Couldn't connect on empty config: %v", err)
 	}
@@ -189,7 +191,18 @@ func TestEndpointWrite(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 	t.Log("Sending some points")
-	c.Post <- createBatch()
+	err = c.Post(createBatch())
+	if err != nil {
+		t.Fatalf("Unable to post dummy data")
+	}
+	pt, err := c.Stats()
+	if err != nil {
+		t.Fatalf("Unable to read stats on server: %v", c.Alias)
+	}
+	t.Logf("Stats: %v", pt)
+	if string(pt.Name()) != "sir_relay" {
+		t.Fatalf("Statistic has the wrong name: %v", pt.Name())
+	}
 	// sending shutdown
 	t.Log("Sending shutdown msg")
 	c.Shutdown <- struct{}{}

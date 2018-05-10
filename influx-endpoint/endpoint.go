@@ -5,34 +5,38 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"sync/atomic"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/influxdata/influxdb/client/v2"
+	"github.com/influxdata/influxdb/models"
 )
-
-// ServerState is a set of constant states
-type ServerState uint8
 
 // ServerState events
 const (
-	ServerStateInactive  ServerState = 0
-	ServerStateActive    ServerState = 1
-	ServerStateSuspended ServerState = 2
-	ServerStateFailed    ServerState = 3
-	UserAgent            string      = "SIR"
+	ServerStateInactive  uint32        = 0
+	ServerStateStarting  uint32        = 1
+	ServerStateActive    uint32        = 2
+	ServerStateSuspended uint32        = 3
+	ServerStateFailed    uint32        = 4
+	ServerStateDrop      uint32        = 5
+	UserAgent            string        = "SIR"
+	DefaultPrintFreq     time.Duration = 10 * time.Second
 )
 
 // HTTPInfluxServer type
 type HTTPInfluxServer struct {
-	Alias    string
-	Dbregex  []string
-	Client   client.Client
-	Status   ServerState
-	Config   *client.HTTPConfig
-	Shutdown chan struct{}
-	Post     chan client.BatchPoints
-	Response chan error
+	Alias       string
+	Dbregex     []string
+	Client      client.Client
+	Status      uint32
+	Config      *client.HTTPConfig
+	Shutdown    chan struct{}
+	concurrent  chan struct{}
+	PingFreq    time.Duration
+	NumRq       uint
+	PostCounter uint64
 }
 
 // NewHTTPInfluxServer is a
@@ -52,13 +56,14 @@ func NewHTTPInfluxServer(alias string, dbregex []string, httpConfig *client.HTTP
 	}
 
 	return &HTTPInfluxServer{
-		Alias:    alias,
-		Dbregex:  dbregex,
-		Config:   httpConfig,
-		Status:   ServerStateActive,
-		Shutdown: make(chan struct{}),
-		Post:     make(chan client.BatchPoints),
-		Response: make(chan error),
+		Alias:      alias,
+		Dbregex:    dbregex,
+		Config:     httpConfig,
+		Status:     ServerStateActive,
+		Shutdown:   make(chan struct{}),
+		NumRq:      100,
+		PingFreq:   10 * time.Second,
+		concurrent: make(chan struct{}, 100),
 	}, nil
 }
 
@@ -67,10 +72,10 @@ func (server *HTTPInfluxServer) Connect() error {
 	c, err := client.NewHTTPClient(*server.Config)
 	if err != nil {
 		log.Panic(err)
-		server.Status = ServerStateInactive
+		atomic.StoreUint32(&server.Status, ServerStateFailed)
 	} else {
 		server.Client = c
-		server.Status = ServerStateActive
+		atomic.StoreUint32(&server.Status, ServerStateActive)
 	}
 	return err
 }
@@ -81,7 +86,7 @@ func (server *HTTPInfluxServer) Close() {
 	if server.Client != nil {
 		server.Client.Close()
 	}
-	server.Status = ServerStateInactive
+	atomic.StoreUint32(&server.Status, ServerStateInactive)
 }
 
 // GetInfluxServerbyDB returns the list of Servers
@@ -123,6 +128,8 @@ type HTTPInfluxServerConfig struct {
 	UnsafeSSL        bool `toml:"unsafe_ssl"`
 	Secure           bool
 	Enable           bool
+	ConcurrentRq     int      `toml:"max_concurrent_requests"`
+	PingFrequency    duration `toml:"ping_frequency"`
 }
 
 func (d *duration) UnmarshalText(text []byte) error {
@@ -146,7 +153,7 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 	new.Alias = c.Alias
 	new.Dbregex = c.DBregex
 	if !c.Enable {
-		new.Status = ServerStateSuspended
+		atomic.StoreUint32(&new.Status, ServerStateSuspended)
 	}
 	new.Config = &client.HTTPConfig{}
 	if c.Secure {
@@ -160,19 +167,77 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 	new.Config.Password = c.Password
 	new.Config.Timeout = c.Timeout.toTimeDuration()
 	new.Shutdown = make(chan struct{})
-	new.Post = make(chan client.BatchPoints)
+	if c.ConcurrentRq > 0 {
+		new.NumRq = uint(c.ConcurrentRq)
+	} else {
+		new.NumRq = 100
+	}
+	new.concurrent = make(chan struct{}, c.ConcurrentRq)
+	new.PingFreq = c.PingFrequency.toTimeDuration()
+	if new.PingFreq == 0 {
+		new.PingFreq = DefaultPrintFreq
+	}
 
 	return new
+}
+
+// Ping returns nil if the connection is successful
+// and a No content ping is made
+// otherwise, propagates the error and sets the state.
+func (server *HTTPInfluxServer) Ping() error {
+	state := atomic.LoadUint32(&server.Status)
+	if state == ServerStateInactive || server.Client == nil {
+		return errors.New("Server connection not initialised")
+	}
+	_, _, err := server.Client.Ping(server.Config.Timeout)
+	if err != nil && (state == ServerStateActive || state == ServerStateDrop) {
+		atomic.StoreUint32(&server.Status, ServerStateFailed)
+	} else {
+		if state == ServerStateFailed {
+			atomic.StoreUint32(&server.Status, ServerStateActive)
+		}
+	}
+	return err
+}
+
+// Stats return a data point per relay
+func (server *HTTPInfluxServer) Stats() (models.Point, error) {
+	tags := models.NewTags(map[string]string{"alias": server.Alias})
+	fields := map[string]interface{}{
+		"active_req": len(server.concurrent),
+		"state":      atomic.LoadUint32(&server.Status),
+		"count":      atomic.LoadUint64(&server.PostCounter),
+	}
+
+	return models.NewPoint("sir_relay", tags, fields, time.Now())
+}
+
+// Post is the main posting function.
+// Returns nil if all good, otherwise error.
+func (server *HTTPInfluxServer) Post(bp client.BatchPoints) error {
+	server.concurrent <- struct{}{}
+	err := server.Client.Write(bp)
+	if err != nil {
+		log.Printf("Couldn't post to Influx server %v: %v", server.Alias, err)
+		// TODO: something smart
+	} else {
+		atomic.AddUint64(&server.PostCounter, uint64(len(bp.Points())))
+	}
+	<-server.concurrent
+	return err
 }
 
 // Run is the main loop
 func (server *HTTPInfluxServer) Run() error {
 
-	if server.Status != ServerStateSuspended {
+	if atomic.LoadUint32(&server.Status) != ServerStateSuspended {
+		atomic.StoreUint32(&server.Status, ServerStateStarting)
 		server.Connect()
 	}
 
+	tick := time.NewTicker(server.PingFreq)
 	// TODO: Add good start and watchdog logic
+
 MAINLOOP:
 	for {
 		select {
@@ -181,10 +246,10 @@ MAINLOOP:
 			log.Printf("Received shutdown for server %v", server.Alias)
 			server.Close()
 			break MAINLOOP
-		case bp := <-server.Post:
-			// go to the void
-			server.Client.Write(bp)
-			//server.Response <- nil
+
+		case <-tick.C:
+			log.Printf("Tick for server %v\n", server.Alias)
+			server.Ping()
 		}
 	}
 
