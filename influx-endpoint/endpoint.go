@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"regexp"
 	"sync/atomic"
 	"time"
 
@@ -89,21 +88,6 @@ func (server *HTTPInfluxServer) Close() {
 	atomic.StoreUint32(&server.Status, ServerStateInactive)
 }
 
-// GetInfluxServerbyDB returns the list of Servers
-// which regex match the db string
-func GetInfluxServerbyDB(db string, servers []*HTTPInfluxServer) []*HTTPInfluxServer {
-	var ret []*HTTPInfluxServer
-	for _, server := range servers {
-		for _, reg := range server.Dbregex {
-			if match, err := regexp.MatchString(reg, db); match && err == nil {
-				ret = append(ret, server)
-				break
-			}
-		}
-	}
-	return ret
-}
-
 // helps with the toml parsing
 type duration struct {
 	time.Duration
@@ -151,7 +135,11 @@ func NewHTTPInfluxServerParseConfig(config string) (*HTTPInfluxServerConfig, err
 func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer {
 	new := &HTTPInfluxServer{}
 	new.Alias = c.Alias
-	new.Dbregex = c.DBregex
+	if len(c.DBregex) == 0 {
+		new.Dbregex = []string{".*"}
+	} else {
+		new.Dbregex = c.DBregex
+	}
 	if !c.Enable {
 		atomic.StoreUint32(&new.Status, ServerStateSuspended)
 	}
@@ -172,7 +160,7 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 	} else {
 		new.NumRq = 100
 	}
-	new.concurrent = make(chan struct{}, c.ConcurrentRq)
+	new.concurrent = make(chan struct{}, new.NumRq)
 	new.PingFreq = c.PingFrequency.toTimeDuration()
 	if new.PingFreq == 0 {
 		new.PingFreq = DefaultPrintFreq
@@ -224,6 +212,7 @@ func (server *HTTPInfluxServer) Post(bp client.BatchPoints) error {
 		atomic.AddUint64(&server.PostCounter, uint64(len(bp.Points())))
 	}
 	<-server.concurrent
+	// at the moment, pass the post err as is
 	return err
 }
 

@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"sync"
 
 	"github.com/BurntSushi/toml"
+	"github.com/influxdata/influxdb/client/v2"
 	"github.com/influxdata/influxdb/models"
 )
 
@@ -71,6 +73,21 @@ func (mgr *HTTPInfluxServerMgr) GetServerPerName(s string) (*HTTPInfluxServer, e
 	return nil, errors.New("Could not find server " + s)
 }
 
+// GetInfluxServerbyDB returns the list of Servers
+// which regex match the db string
+func (mgr *HTTPInfluxServerMgr) GetInfluxServerbyDB(db string) []*HTTPInfluxServer {
+	var ret []*HTTPInfluxServer
+	for _, server := range mgr.Endpoints {
+		for _, reg := range server.Dbregex {
+			if match, err := regexp.MatchString(reg, db); match && err == nil {
+				ret = append(ret, server)
+				break
+			}
+		}
+	}
+	return ret
+}
+
 // StartAllServers triggers a start for
 // all servers in Endpoints
 func (mgr *HTTPInfluxServerMgr) StartAllServers() error {
@@ -87,6 +104,8 @@ func (mgr *HTTPInfluxServerMgr) StartAllServers() error {
 	return nil
 }
 
+// Stats returns Points which gather up all points
+// from all endpoints
 func (mgr *HTTPInfluxServerMgr) Stats() (models.Points, error) {
 	pts := make(models.Points, len(mgr.Endpoints))
 	var err error
@@ -107,6 +126,27 @@ func (mgr *HTTPInfluxServerMgr) StopAllServers() {
 		s.Shutdown <- struct{}{}
 	}
 	mgr.wg.Wait()
+}
+
+// Post relays the batch points to the post function
+// of each endpoint
+func (mgr *HTTPInfluxServerMgr) Post(bp client.BatchPoints) error {
+	endpoints, ok := mgr.index[bp.Database()]
+	if !ok {
+		endpoints = mgr.GetInfluxServerbyDB(bp.Database())
+		mgr.index[bp.Database()] = endpoints
+	}
+	if len(endpoints) == 0 {
+		return fmt.Errorf("No endpoint for db %v", bp.Database())
+	}
+	var err error
+	for _, s := range endpoints {
+		err = s.Post(bp)
+		if err != nil {
+			return err
+		}
+	}
+	return err
 }
 
 // Run is the main loop

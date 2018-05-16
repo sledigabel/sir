@@ -1,6 +1,7 @@
 package endpoint_test
 
 import (
+	"log"
 	"sync"
 	"testing"
 	"time"
@@ -91,6 +92,45 @@ func TestEndpointMgmtNewRun(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go mgr.Run(&wg)
+	time.Sleep(time.Second)
+	t.Log("Shutdown mgr")
+	mgr.Shutdown <- struct{}{}
+	wg.Wait()
+	t.Log("Shutdown Completed")
+
+}
+
+func TestEndpointMgmtNewPost(t *testing.T) {
+
+	ts := emptyTestServer()
+	defer ts.Close()
+
+	var config string = `
+	[servers]
+		[server.1]
+		alias = "simple"
+		enable = true
+	`
+	mgr, err := endpoint.NewHTTPInfluxServerMgrFromConfig(config)
+	if err != nil {
+		t.Fatalf("Error creating server")
+	}
+	_, ok := mgr.Endpoints["simple"]
+	if !ok {
+		t.Fatalf("simple not in endpoint list")
+	}
+	mgr.Endpoints["simple"].Config.Addr = ts.URL
+	log.Printf("%v\n%v", mgr.Endpoints["simple"], mgr.Endpoints["simple"].Config)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go mgr.Run(&wg)
+	time.Sleep(time.Second)
+	pts := createBatch()
+	err = mgr.Post(pts)
+	if err != nil {
+		t.Fatal("Failed posting example points")
+	}
 	time.Sleep(time.Second)
 	t.Log("Shutdown mgr")
 	mgr.Shutdown <- struct{}{}

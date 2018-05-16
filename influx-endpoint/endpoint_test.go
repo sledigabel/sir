@@ -2,10 +2,6 @@ package endpoint_test
 
 import (
 	"fmt"
-	"io/ioutil"
-	"log"
-	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -37,43 +33,6 @@ func TestNewHTTPInfluxServerEmptyDBRegex(t *testing.T) {
 	if len(i.Dbregex) != 1 && i.Dbregex[0] != ".*" {
 		t.Errorf("Error, Dbregex should have been replaced by a .*: %v", err)
 	}
-}
-
-func TestGetInfluxServerbyDBBasic(t *testing.T) {
-
-	// setup
-	var list []*endpoint.HTTPInfluxServer
-	list = make([]*endpoint.HTTPInfluxServer, 3)
-	list[0], _ = endpoint.NewHTTPInfluxServer(
-		"test1",
-		[]string{".*"},
-		&client.HTTPConfig{})
-
-	list[1], _ = endpoint.NewHTTPInfluxServer(
-		"test2",
-		[]string{"SHOULDNEVERMATCH"},
-		&client.HTTPConfig{})
-	list[2], _ = endpoint.NewHTTPInfluxServer(
-		"test3",
-		[]string{"[a-z]*"},
-		&client.HTTPConfig{})
-
-	filtered := endpoint.GetInfluxServerbyDB("try", list)
-	if len(filtered) != 2 {
-		for _, s := range filtered {
-			t.Logf("Matched on: %v", s.Alias)
-		}
-		t.Errorf("Should only match 2 servers but found %v", len(filtered))
-	}
-}
-
-func emptyTestServer() *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := ioutil.ReadAll(r.Body)
-		log.Printf("Received: %v\nContent: %v", r, string(b))
-		time.Sleep(50 * time.Millisecond)
-		w.Header().Set("X-Influxdb-Version", "x.x")
-	}))
 }
 
 func TestNewHTTPInfluxServerConnect(t *testing.T) {
