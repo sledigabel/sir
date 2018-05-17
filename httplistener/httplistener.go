@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/influxdata/influxdb/client/v2"
 	"github.com/influxdata/influxdb/models"
 )
 
@@ -15,6 +16,12 @@ const (
 	defaultAddr string = ":8186"
 	defaultRP   string = "autogen"
 )
+
+// Backend represents a backend
+// entity to relay metrics to
+type Backend interface {
+	Post(client.BatchPoints) error
+}
 
 // HTTP is a relay for HTTP influxdb writes
 type HTTP struct {
@@ -28,6 +35,7 @@ type HTTP struct {
 	Listener         net.Listener
 	Debug            bool
 	DebugConnections bool
+	BackendMgr       Backend
 }
 
 // HTTPConf is the basic config structure for HTTP
@@ -143,14 +151,30 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the default would be nanosecond if precision isn't specified.
 	precision := queryParams.Get("precision")
 
+	// prep the batch
+	bp, err := client.NewBatchPoints(client.BatchPointsConfig{
+		Database:  queryParams.Get("db"),
+		Precision: precision,
+	})
+
 	// parse the points
-	// points, err := models.ParsePointsWithPrecision(bodyBuf.Bytes(), start, precision)
-	// for now don't do anything
-	_, err = models.ParsePointsWithPrecision(bodyBuf.Bytes(), start, precision)
+	points, err := models.ParsePointsWithPrecision(bodyBuf.Bytes(), start, precision)
 	if err != nil {
 		putBuf(bodyBuf)
 		jsonError(w, http.StatusBadRequest, "failed parsing points")
 		return
+	}
+
+	for _, p := range points {
+		bp.AddPoint(client.NewPointFrom(p))
+	}
+
+	// if we have a backend configured, post
+	if h.BackendMgr != nil {
+		err = h.BackendMgr.Post(bp)
+		if err != nil {
+			// TODO: something smart
+		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)
