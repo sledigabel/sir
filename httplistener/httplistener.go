@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/influxdata/influxdb/client/v2"
 	"github.com/influxdata/influxdb/models"
 )
@@ -40,9 +41,9 @@ type HTTP struct {
 
 // HTTPConf is the basic config structure for HTTP
 type HTTPConf struct {
-	Addr            string
+	Addr            string `toml:"addr"`
 	Certificate     string
-	RetentionPolicy string
+	RetentionPolicy string `toml:"retention_policy"`
 	Timeout         int
 }
 
@@ -79,6 +80,23 @@ func NewHTTPWithParameters(addr string, cert string, rp string, timeout int) *HT
 		Debug:            false,
 		DebugConnections: false,
 	}
+}
+
+func NewHTTPfromConfig(hc *HTTPConf) *HTTP {
+	return NewHTTPWithParameters(hc.Addr, hc.Certificate, hc.RetentionPolicy, hc.Timeout)
+}
+
+type listener HTTPConf
+type myconf struct {
+	Listener listener
+}
+
+func NewHTTPParseConfig(conf string) (*HTTPConf, error) {
+	l := myconf{}
+	_, err := toml.Decode(conf, &l)
+	log.Printf("%v", l)
+	hc := HTTPConf(l.Listener)
+	return &hc, err
 }
 
 func (h *HTTP) toString() string {
