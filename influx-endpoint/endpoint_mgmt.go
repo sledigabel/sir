@@ -150,7 +150,7 @@ func (mgr *HTTPInfluxServerMgr) Post(bp client.BatchPoints) error {
 }
 
 // Run is the main loop
-func (mgr *HTTPInfluxServerMgr) Run(wg *sync.WaitGroup) {
+func (mgr *HTTPInfluxServerMgr) Run() {
 
 	err := mgr.StartAllServers()
 	if err != nil {
@@ -168,6 +168,5 @@ MAINLOOP:
 		}
 	}
 	log.Print("Closing mgr")
-	wg.Done()
 
 }

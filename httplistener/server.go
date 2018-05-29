@@ -43,5 +43,9 @@ func (h *HTTP) Run() error {
 // Stop is called when the HTTP server is shutdown
 func (h *HTTP) Stop() error {
 	atomic.StoreInt32(&h.State, 1)
-	return h.Listener.Close()
+	var err error
+	if h.Listener != nil {
+		err = h.Listener.Close()
+	}
+	return err
 }

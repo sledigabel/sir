@@ -2,7 +2,6 @@ package endpoint_test
 
 import (
 	"log"
-	"sync"
 	"testing"
 	"time"
 
@@ -89,13 +88,10 @@ func TestEndpointMgmtNewRun(t *testing.T) {
 		t.Fatalf("Error creating the 2 servers")
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go mgr.Run(&wg)
+	go mgr.Run()
 	time.Sleep(time.Second)
 	t.Log("Shutdown mgr")
 	mgr.Shutdown <- struct{}{}
-	wg.Wait()
 	t.Log("Shutdown Completed")
 
 }
@@ -122,9 +118,7 @@ func TestEndpointMgmtNewPost(t *testing.T) {
 	mgr.Endpoints["simple"].Config.Addr = ts.URL
 	log.Printf("%v\n%v", mgr.Endpoints["simple"], mgr.Endpoints["simple"].Config)
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go mgr.Run(&wg)
+	go mgr.Run()
 	time.Sleep(time.Second)
 	pts := createBatch()
 	err = mgr.Post(pts)
@@ -134,7 +128,6 @@ func TestEndpointMgmtNewPost(t *testing.T) {
 	time.Sleep(time.Second)
 	t.Log("Shutdown mgr")
 	mgr.Shutdown <- struct{}{}
-	wg.Wait()
 	t.Log("Shutdown Completed")
 
 }

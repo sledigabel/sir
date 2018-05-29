@@ -111,7 +111,7 @@ type HTTPInfluxServerConfig struct {
 	Timeout          duration
 	UnsafeSSL        bool `toml:"unsafe_ssl"`
 	Secure           bool
-	Enable           bool
+	Disable          bool     `toml:"disable"`
 	ConcurrentRq     int      `toml:"max_concurrent_requests"`
 	PingFrequency    duration `toml:"ping_frequency"`
 }
@@ -140,7 +140,7 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 	} else {
 		new.Dbregex = c.DBregex
 	}
-	if !c.Enable {
+	if c.Disable {
 		atomic.StoreUint32(&new.Status, ServerStateSuspended)
 	}
 	new.Config = &client.HTTPConfig{}
