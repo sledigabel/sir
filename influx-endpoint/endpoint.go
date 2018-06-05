@@ -221,7 +221,10 @@ func (server *HTTPInfluxServer) Run() error {
 
 	if atomic.LoadUint32(&server.Status) != ServerStateSuspended {
 		atomic.StoreUint32(&server.Status, ServerStateStarting)
-		server.Connect()
+		if err := server.Connect(); err != nil {
+			atomic.StoreUint32(&server.Status, ServerStateFailed)
+			return err
+		}
 	}
 
 	tick := time.NewTicker(server.PingFreq)
@@ -238,7 +241,19 @@ MAINLOOP:
 
 		case <-tick.C:
 			log.Printf("Tick for server %v\n", server.Alias)
-			server.Ping()
+			state := atomic.LoadUint32(&server.Status)
+			if server.Status != ServerStateSuspended {
+				err := server.Ping()
+				if err != nil && state == ServerStateActive {
+					log.Printf("Failed to ping server %v", server.Alias)
+					atomic.StoreUint32(&server.Status, ServerStateFailed)
+				} else {
+					if state != ServerStateActive {
+						atomic.StoreUint32(&server.Status, ServerStateActive)
+					}
+				}
+			}
+
 		}
 	}
 
