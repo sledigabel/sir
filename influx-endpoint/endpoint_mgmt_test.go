@@ -1,7 +1,6 @@
 package endpoint_test
 
 import (
-	"log"
 	"testing"
 	"time"
 
@@ -18,6 +17,8 @@ func TestEndpointMgmtNew(t *testing.T) {
 
 func TestEndpointMgmtNewFromConfig(t *testing.T) {
 	var config string = `
+	debug = true
+	
 	[servers]
 
 		[server.1]
@@ -29,6 +30,9 @@ func TestEndpointMgmtNewFromConfig(t *testing.T) {
 		alias = "test2"
 		unsafe_ssl = true
 
+	[internal]
+	database = "test"
+	frequency = 45
 	`
 	n, err := endpoint.NewHTTPInfluxServerMgrFromConfig(config)
 	t.Logf("%v\n", n)
@@ -47,6 +51,13 @@ func TestEndpointMgmtNewFromConfig(t *testing.T) {
 		t.Fatalf("Found a non-existent server (test3)!")
 	}
 
+	if n.Telemetry.Database != "test" || n.Telemetry.Frequency != 45 {
+		t.Fatalf("Did not find the expected results: %v", n.Telemetry)
+	}
+
+	if n.Debug != true {
+		t.Fatalf("Did not set up Debug: %v", n.Debug)
+	}
 }
 
 func TestEndpointMgmtNewFromConfigDuplicates(t *testing.T) {
@@ -116,7 +127,6 @@ func TestEndpointMgmtNewPost(t *testing.T) {
 		t.Fatalf("simple not in endpoint list")
 	}
 	mgr.Endpoints["simple"].Config.Addr = ts.URL
-	log.Printf("%v\n%v", mgr.Endpoints["simple"], mgr.Endpoints["simple"].Config)
 
 	go mgr.Run()
 	time.Sleep(time.Second)

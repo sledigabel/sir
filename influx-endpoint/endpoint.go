@@ -36,6 +36,7 @@ type HTTPInfluxServer struct {
 	PingFreq    time.Duration
 	NumRq       uint
 	PostCounter uint64
+	Debug       bool
 }
 
 // NewHTTPInfluxServer is a
@@ -63,6 +64,7 @@ func NewHTTPInfluxServer(alias string, dbregex []string, httpConfig *client.HTTP
 		NumRq:      100,
 		PingFreq:   10 * time.Second,
 		concurrent: make(chan struct{}, 100),
+		Debug:      false,
 	}, nil
 }
 
@@ -114,6 +116,7 @@ type HTTPInfluxServerConfig struct {
 	Disable          bool     `toml:"disable"`
 	ConcurrentRq     int      `toml:"max_concurrent_requests"`
 	PingFrequency    duration `toml:"ping_frequency"`
+	Debug            bool     `toml:"debug"`
 }
 
 func (d *duration) UnmarshalText(text []byte) error {
@@ -206,7 +209,9 @@ func (server *HTTPInfluxServer) Post(bp client.BatchPoints) error {
 	server.concurrent <- struct{}{}
 	err := server.Client.Write(bp)
 	if err != nil {
-		log.Printf("Couldn't post to Influx server %v: %v", server.Alias, err)
+		if server.Debug {
+			log.Printf("Couldn't post to Influx server %v: %v", server.Alias, err)
+		}
 		// TODO: something smart
 	} else {
 		atomic.AddUint64(&server.PostCounter, uint64(len(bp.Points())))
@@ -235,12 +240,16 @@ MAINLOOP:
 		select {
 		case <-server.Shutdown:
 			// triggering shutdown
-			log.Printf("Received shutdown for server %v", server.Alias)
+			if server.Debug {
+				log.Printf("Received shutdown for server %v", server.Alias)
+			}
 			server.Close()
 			break MAINLOOP
 
 		case <-tick.C:
-			log.Printf("Tick for server %v\n", server.Alias)
+			if server.Debug {
+				log.Printf("Tick for server %v\n", server.Alias)
+			}
 			state := atomic.LoadUint32(&server.Status)
 			if server.Status != ServerStateSuspended {
 				err := server.Ping()

@@ -14,9 +14,16 @@ import (
 
 // HTTPInfluxServerMgr is the struct
 // that manages multiple endpoints
+
+type Internal struct {
+	Frequency int
+	Database  string
+}
 type HTTPInfluxServerMgr struct {
 	wg        sync.WaitGroup
 	Shutdown  chan struct{}
+	Telemetry Internal
+	Debug     bool
 	index     map[string][]*HTTPInfluxServer
 	Endpoints map[string]*HTTPInfluxServer
 }
@@ -28,13 +35,20 @@ func NewHTTPInfluxServerMgr() *HTTPInfluxServerMgr {
 	m.Endpoints = make(map[string]*HTTPInfluxServer)
 	m.index = make(map[string][]*HTTPInfluxServer)
 	m.Shutdown = make(chan struct{})
+	m.Telemetry = Internal{}
+	m.Telemetry.Database = "internal"
+	m.Telemetry.Frequency = 60
+	m.Debug = false
 	return &m
 }
 
 // those types are solely used for the config parsing
+type internal Internal
 type server HTTPInfluxServerConfig
 type servers struct {
-	Server map[string]server
+	Server   map[string]server
+	Internal internal
+	Debug    bool
 }
 
 // NewHTTPInfluxServerMgrFromConfig is a constructor
@@ -49,15 +63,26 @@ func NewHTTPInfluxServerMgrFromConfig(config string) (*HTTPInfluxServerMgr, erro
 		return m, err
 	}
 
+	m.Debug = e.Debug
 	for _, c := range e.Server {
 		// FIXME: horrible type cast
 		hc := HTTPInfluxServerConfig(c)
 		s := NewHTTPInfluxServerFromConfig(&hc)
+		if m.Debug && !hc.Debug {
+			s.Debug = true
+		}
 
 		if _, ok := m.Endpoints[s.Alias]; ok {
 			return m, fmt.Errorf("Error: key %v already exists", s.Alias)
 		}
 		m.Endpoints[s.Alias] = s
+	}
+
+	if e.Internal.Database != "" {
+		m.Telemetry.Database = e.Internal.Database
+	}
+	if e.Internal.Frequency > 0 {
+		m.Telemetry.Frequency = e.Internal.Frequency
 	}
 
 	return m, nil
@@ -96,7 +121,9 @@ func (mgr *HTTPInfluxServerMgr) StartAllServers() error {
 			mgr.wg.Add(1)
 			err := h.Run()
 			if err != nil {
-				log.Printf("An error occured with endpoint %v: %v", h.Alias, err)
+				if mgr.Debug {
+					log.Printf("An error occured with endpoint %v: %v", h.Alias, err)
+				}
 			}
 			mgr.wg.Done()
 		}(s)
@@ -154,7 +181,7 @@ func (mgr *HTTPInfluxServerMgr) Run() {
 
 	err := mgr.StartAllServers()
 	if err != nil {
-		log.Printf("Caught expection while starting servers: %v", err)
+		log.Fatalf("Caught expection while starting servers: %v", err)
 	}
 
 MAINLOOP:
@@ -167,6 +194,8 @@ MAINLOOP:
 			break MAINLOOP
 		}
 	}
-	log.Print("Closing mgr")
+	if mgr.Debug {
+		log.Print("Closing mgr")
+	}
 
 }
