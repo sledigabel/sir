@@ -31,8 +31,9 @@ func TestEndpointMgmtNewFromConfig(t *testing.T) {
 		unsafe_ssl = true
 
 	[internal]
+	enable = true
 	database = "test"
-	frequency = 45
+	frequency = "45s"
 	`
 	n, err := endpoint.NewHTTPInfluxServerMgrFromConfig(config)
 	t.Logf("%v\n", n)
@@ -51,7 +52,9 @@ func TestEndpointMgmtNewFromConfig(t *testing.T) {
 		t.Fatalf("Found a non-existent server (test3)!")
 	}
 
-	if n.Telemetry.Database != "test" || n.Telemetry.Frequency != 45 {
+	if !n.Telemetry.Enable ||
+		n.Telemetry.Database != "test" ||
+		n.Telemetry.Frequency != "45s" {
 		t.Fatalf("Did not find the expected results: %v", n.Telemetry)
 	}
 
@@ -101,7 +104,6 @@ func TestEndpointMgmtNewRun(t *testing.T) {
 
 	go mgr.Run()
 	time.Sleep(time.Second)
-	t.Log("Shutdown mgr")
 	mgr.Shutdown <- struct{}{}
 	t.Log("Shutdown Completed")
 
@@ -136,8 +138,78 @@ func TestEndpointMgmtNewPost(t *testing.T) {
 		t.Fatal("Failed posting example points")
 	}
 	time.Sleep(time.Second)
-	t.Log("Shutdown mgr")
 	mgr.Shutdown <- struct{}{}
+	t.Log("Shutdown Completed")
+
+}
+
+func TestEndpointMgmtNewStats(t *testing.T) {
+
+	var config string = `
+	[servers]
+		[server.1]
+		alias = "test1"
+		enable = false
+
+		[server.2]
+		alias = "test2"
+		enable = false
+	`
+	mgr, err := endpoint.NewHTTPInfluxServerMgrFromConfig(config)
+	if err != nil {
+		t.Fatalf("Error creating the 2 servers")
+	}
+
+	go mgr.Run()
+	bp, err := mgr.Stats()
+	if err != nil {
+		t.Fatalf("Couldn't get stats: %v", err)
+	}
+	if len(bp.Points()) < 2 {
+		t.Fatal("Collected too few metrics :-(")
+	}
+	for _, p := range bp.Points() {
+		t.Log(p.String())
+	}
+	mgr.Shutdown <- struct{}{}
+	t.Log("Shutdown Completed")
+
+}
+
+func TestEndpointMgmtNewSubmitStats(t *testing.T) {
+	ts := emptyTestServer()
+	defer ts.Close()
+
+	var conf_submit_stats string = `
+	[internal]
+	database = "test_submit"
+	frequency = "100ms"
+	enable = true
+
+	[servers]
+		[server.1]
+		alias = "test1"
+		enable = false
+	`
+
+	mgr_submit, err := endpoint.NewHTTPInfluxServerMgrFromConfig(conf_submit_stats)
+	mgr_submit.Endpoints["test1"].Config.Addr = ts.URL
+
+	go mgr_submit.Run()
+	time.Sleep(1 * time.Second)
+
+	bp, err := mgr_submit.Stats()
+	if err != nil {
+		t.Fatalf("Couldn't get stats: %v", err)
+	}
+	if len(bp.Points()) < 1 {
+		t.Fatal("Collected too few metrics :-(")
+	}
+	fields, _ := bp.Points()[0].Fields()
+	if bp.Points()[0].Name() != "sir_relay" || fields["count"].(uint64) < 9 {
+		t.Fatalf("Metrics were not collected enough:\n%v", bp.Points()[0].String())
+	}
+	mgr_submit.Shutdown <- struct{}{}
 	t.Log("Shutdown Completed")
 
 }

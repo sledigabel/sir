@@ -192,15 +192,17 @@ func (server *HTTPInfluxServer) Ping() error {
 }
 
 // Stats return a data point per relay
-func (server *HTTPInfluxServer) Stats() (models.Point, error) {
+func (server *HTTPInfluxServer) Stats() ([]models.Point, error) {
+	pts := make([]models.Point, 0)
 	tags := models.NewTags(map[string]string{"alias": server.Alias})
 	fields := map[string]interface{}{
 		"active_req": len(server.concurrent),
 		"state":      atomic.LoadUint32(&server.Status),
 		"count":      atomic.LoadUint64(&server.PostCounter),
 	}
-
-	return models.NewPoint("sir_relay", tags, fields, time.Now())
+	pt, _ := models.NewPoint("sir_relay", tags, fields, time.Now())
+	pts = append(pts, pt)
+	return pts, nil
 }
 
 // Post is the main posting function.

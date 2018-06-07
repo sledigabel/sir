@@ -6,19 +6,22 @@ import (
 	"log"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/influxdata/influxdb/client/v2"
-	"github.com/influxdata/influxdb/models"
 )
+
+// Internal is the struct dedicated
+// for collecting statistics
+type Internal struct {
+	Frequency string
+	Database  string
+	Enable    bool
+}
 
 // HTTPInfluxServerMgr is the struct
 // that manages multiple endpoints
-
-type Internal struct {
-	Frequency int
-	Database  string
-}
 type HTTPInfluxServerMgr struct {
 	wg        sync.WaitGroup
 	Shutdown  chan struct{}
@@ -37,7 +40,8 @@ func NewHTTPInfluxServerMgr() *HTTPInfluxServerMgr {
 	m.Shutdown = make(chan struct{})
 	m.Telemetry = Internal{}
 	m.Telemetry.Database = "internal"
-	m.Telemetry.Frequency = 60
+	m.Telemetry.Frequency = "60s"
+	m.Telemetry.Enable = false
 	m.Debug = false
 	return &m
 }
@@ -81,9 +85,13 @@ func NewHTTPInfluxServerMgrFromConfig(config string) (*HTTPInfluxServerMgr, erro
 	if e.Internal.Database != "" {
 		m.Telemetry.Database = e.Internal.Database
 	}
-	if e.Internal.Frequency > 0 {
+	if e.Internal.Frequency != "" {
+		if _, err := time.ParseDuration(e.Internal.Frequency); err != nil {
+			log.Fatalf("Unable to parse internal frequency: %v", e.Internal.Frequency)
+		}
 		m.Telemetry.Frequency = e.Internal.Frequency
 	}
+	m.Telemetry.Enable = e.Internal.Enable
 
 	return m, nil
 }
@@ -133,17 +141,22 @@ func (mgr *HTTPInfluxServerMgr) StartAllServers() error {
 
 // Stats returns Points which gather up all points
 // from all endpoints
-func (mgr *HTTPInfluxServerMgr) Stats() (models.Points, error) {
-	pts := make(models.Points, len(mgr.Endpoints))
+func (mgr *HTTPInfluxServerMgr) Stats() (client.BatchPoints, error) {
+	batch, _ := client.NewBatchPoints(client.BatchPointsConfig{
+		Database: mgr.Telemetry.Database,
+	})
 	var err error
+
 	for _, s := range mgr.Endpoints {
-		pt, err := s.Stats()
+		spt, err := s.Stats()
 		if err != nil {
 			break
 		}
-		pts = append(pts, pt)
+		for _, p := range spt {
+			batch.AddPoint(client.NewPointFrom(p))
+		}
 	}
-	return pts, err
+	return batch, err
 }
 
 // StopAllServers triggers a stop on all
@@ -168,6 +181,7 @@ func (mgr *HTTPInfluxServerMgr) Post(bp client.BatchPoints) error {
 	}
 	var err error
 	for _, s := range endpoints {
+
 		err = s.Post(bp)
 		if err != nil {
 			return err
@@ -183,6 +197,13 @@ func (mgr *HTTPInfluxServerMgr) Run() {
 	if err != nil {
 		log.Fatalf("Caught expection while starting servers: %v", err)
 	}
+	var t *time.Ticker
+	if mgr.Telemetry.Enable {
+		d, _ := time.ParseDuration(mgr.Telemetry.Frequency)
+		t = time.NewTicker(d)
+	} else {
+		t = &time.Ticker{}
+	}
 
 MAINLOOP:
 	for {
@@ -192,7 +213,16 @@ MAINLOOP:
 			mgr.StopAllServers()
 			mgr.wg.Wait()
 			break MAINLOOP
+
+		case <-t.C:
+			bp, err := mgr.Stats()
+			if err == nil {
+				mgr.Post(bp)
+			} else {
+				log.Printf("Error collecting stats: %v", err)
+			}
 		}
+
 	}
 	if mgr.Debug {
 		log.Print("Closing mgr")
