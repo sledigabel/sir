@@ -159,7 +159,7 @@ func TestEndpointWrite(t *testing.T) {
 		t.Fatalf("Unable to read stats on server: %v", c.Alias)
 	}
 	t.Logf("Stats: %v", pt)
-	if len(pt) > 0 && string(pt[0].Name()) != "sir_relay" {
+	if len(pt) > 0 && string(pt[0].Name()) != "sir_backend" {
 		t.Fatalf("Statistic has the wrong name: %v", pt[0].Name())
 	}
 	// sending shutdown

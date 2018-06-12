@@ -41,10 +41,12 @@ type HTTP struct {
 
 // HTTPConf is the basic config structure for HTTP
 type HTTPConf struct {
-	Addr            string `toml:"addr"`
-	Certificate     string
-	RetentionPolicy string `toml:"retention_policy"`
-	Timeout         int
+	Addr             string `toml:"addr"`
+	Certificate      string
+	RetentionPolicy  string `toml:"retention_policy"`
+	Timeout          int
+	Debug            bool
+	DebugConnections bool `toml:"log"`
 }
 
 type responseData struct {
@@ -83,7 +85,10 @@ func NewHTTPWithParameters(addr string, cert string, rp string, timeout int) *HT
 }
 
 func NewHTTPfromConfig(hc *HTTPConf) *HTTP {
-	return NewHTTPWithParameters(hc.Addr, hc.Certificate, hc.RetentionPolicy, hc.Timeout)
+	h := NewHTTPWithParameters(hc.Addr, hc.Certificate, hc.RetentionPolicy, hc.Timeout)
+	h.Debug = hc.Debug
+	h.DebugConnections = hc.DebugConnections
+	return h
 }
 
 type listener HTTPConf
@@ -191,11 +196,12 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.BackendMgr != nil {
 		err = h.BackendMgr.Post(bp)
 		if err != nil {
-			// TODO: something smart
+			jsonError(w, http.StatusServiceUnavailable, err.Error())
 		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)
 	w.Header().Add("X-InfluxDB-Version", "relay")
+
 	return
 }

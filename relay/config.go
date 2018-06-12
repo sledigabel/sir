@@ -33,5 +33,6 @@ func ParseRelay(s string) (*Relay, error) {
 	}
 	r.Listener = httplistener.NewHTTPfromConfig(httpconfig)
 	r.Backend, err = endpoint.NewHTTPInfluxServerMgrFromConfig(s)
+	r.Listener.BackendMgr = r.Backend
 	return r, err
 }

@@ -192,7 +192,9 @@ func (mgr *HTTPInfluxServerMgr) Post(bp client.BatchPoints) error {
 
 // Run is the main loop
 func (mgr *HTTPInfluxServerMgr) Run() {
-
+	if mgr.Debug {
+		log.Print("Starting backends")
+	}
 	err := mgr.StartAllServers()
 	if err != nil {
 		log.Fatalf("Caught expection while starting servers: %v", err)
@@ -203,6 +205,10 @@ func (mgr *HTTPInfluxServerMgr) Run() {
 		t = time.NewTicker(d)
 	} else {
 		t = &time.Ticker{}
+	}
+
+	if mgr.Debug && mgr.Telemetry.Enable {
+		log.Printf("collecting stats every %v", mgr.Telemetry.Frequency)
 	}
 
 MAINLOOP:
@@ -217,7 +223,10 @@ MAINLOOP:
 		case <-t.C:
 			bp, err := mgr.Stats()
 			if err == nil {
-				mgr.Post(bp)
+				if err2 := mgr.Post(bp); err2 != nil {
+					log.Printf("Error posting stats: %v", err2)
+				}
+
 			} else {
 				log.Printf("Error collecting stats: %v", err)
 			}

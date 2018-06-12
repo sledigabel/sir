@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,17 +27,19 @@ const (
 
 // HTTPInfluxServer type
 type HTTPInfluxServer struct {
-	Alias       string
-	Dbregex     []string
-	Client      client.Client
-	Status      uint32
-	Config      *client.HTTPConfig
-	Shutdown    chan struct{}
-	concurrent  chan struct{}
-	PingFreq    time.Duration
-	NumRq       uint
-	PostCounter uint64
-	Debug       bool
+	Alias           string
+	Dbregex         []string
+	Client          client.Client
+	Status          uint32
+	Config          *client.HTTPConfig
+	Shutdown        chan struct{}
+	concurrent      chan struct{}
+	PingFreq        time.Duration
+	NumRq           uint
+	PostCounter     uint64
+	DbCounters      map[string]uint64
+	DbCountersMutex sync.Mutex
+	Debug           bool
 }
 
 // NewHTTPInfluxServer is a
@@ -56,15 +59,17 @@ func NewHTTPInfluxServer(alias string, dbregex []string, httpConfig *client.HTTP
 	}
 
 	return &HTTPInfluxServer{
-		Alias:      alias,
-		Dbregex:    dbregex,
-		Config:     httpConfig,
-		Status:     ServerStateActive,
-		Shutdown:   make(chan struct{}),
-		NumRq:      100,
-		PingFreq:   10 * time.Second,
-		concurrent: make(chan struct{}, 100),
-		Debug:      false,
+		Alias:           alias,
+		Dbregex:         dbregex,
+		Config:          httpConfig,
+		Status:          ServerStateActive,
+		Shutdown:        make(chan struct{}),
+		NumRq:           100,
+		PingFreq:        10 * time.Second,
+		concurrent:      make(chan struct{}, 100),
+		Debug:           false,
+		DbCounters:      make(map[string]uint64, 0),
+		DbCountersMutex: sync.Mutex{},
 	}, nil
 }
 
@@ -168,6 +173,8 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 	if new.PingFreq == 0 {
 		new.PingFreq = DefaultPrintFreq
 	}
+	new.DbCounters = make(map[string]uint64)
+	new.DbCountersMutex = sync.Mutex{}
 
 	return new
 }
@@ -194,14 +201,29 @@ func (server *HTTPInfluxServer) Ping() error {
 // Stats return a data point per relay
 func (server *HTTPInfluxServer) Stats() ([]models.Point, error) {
 	pts := make([]models.Point, 0)
-	tags := models.NewTags(map[string]string{"alias": server.Alias})
+	tags := models.NewTags(map[string]string{
+		"alias": server.Alias,
+	})
+	server.DbCountersMutex.Lock()
 	fields := map[string]interface{}{
 		"active_req": len(server.concurrent),
-		"state":      atomic.LoadUint32(&server.Status),
-		"count":      atomic.LoadUint64(&server.PostCounter),
+		"state":      int(atomic.LoadUint32(&server.Status)),
+		"count":      int64(server.PostCounter),
 	}
-	pt, _ := models.NewPoint("sir_relay", tags, fields, time.Now())
+
+	pt, _ := models.NewPoint("sir_backend", tags, fields, time.Now())
 	pts = append(pts, pt)
+	for db, count := range server.DbCounters {
+		tags = models.NewTags(map[string]string{
+			"alias":    server.Alias,
+			"database": db})
+		fields = map[string]interface{}{
+			"count": int64(count),
+		}
+		pt, _ = models.NewPoint("sir_db", tags, fields, time.Now())
+		pts = append(pts, pt)
+	}
+	server.DbCountersMutex.Unlock()
 	return pts, nil
 }
 
@@ -216,7 +238,14 @@ func (server *HTTPInfluxServer) Post(bp client.BatchPoints) error {
 		}
 		// TODO: something smart
 	} else {
-		atomic.AddUint64(&server.PostCounter, uint64(len(bp.Points())))
+		server.DbCountersMutex.Lock()
+		server.PostCounter += uint64(len(bp.Points()))
+		if _, ok := server.DbCounters[bp.Database()]; !ok {
+			server.DbCounters[bp.Database()] = uint64(len(bp.Points()))
+		} else {
+			server.DbCounters[bp.Database()] += uint64(len(bp.Points()))
+		}
+		server.DbCountersMutex.Unlock()
 	}
 	<-server.concurrent
 	// at the moment, pass the post err as is
