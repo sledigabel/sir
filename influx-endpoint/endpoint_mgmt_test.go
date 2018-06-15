@@ -206,7 +206,7 @@ func TestEndpointMgmtNewSubmitStats(t *testing.T) {
 		t.Fatal("Collected too few metrics :-(")
 	}
 	fields, _ := bp.Points()[0].Fields()
-	if bp.Points()[0].Name() != "sir_backend" || fields["count"].(int64) < 9 {
+	if bp.Points()[0].Name() != "sir_backend" || fields["posted"].(int64) < 9 {
 		t.Fatalf("Metrics were not collected enough:\n%v", bp.Points()[0].String())
 	}
 	mgr_submit.Shutdown <- struct{}{}

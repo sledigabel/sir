@@ -152,6 +152,7 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 		atomic.StoreUint32(&new.Status, ServerStateSuspended)
 	}
 	new.Config = &client.HTTPConfig{}
+	new.Config.UserAgent = UserAgent
 	if c.Secure {
 		new.Config.Addr = "https://"
 	} else {
@@ -175,6 +176,7 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 	}
 	new.DbCounters = make(map[string]uint64)
 	new.DbCountersMutex = sync.Mutex{}
+	new.Debug = c.Debug
 
 	return new
 }
@@ -208,7 +210,7 @@ func (server *HTTPInfluxServer) Stats() ([]models.Point, error) {
 	fields := map[string]interface{}{
 		"active_req": len(server.concurrent),
 		"state":      int(atomic.LoadUint32(&server.Status)),
-		"count":      int64(server.PostCounter),
+		"posted":     int64(server.PostCounter),
 	}
 
 	pt, _ := models.NewPoint("sir_backend", tags, fields, time.Now())
@@ -218,7 +220,7 @@ func (server *HTTPInfluxServer) Stats() ([]models.Point, error) {
 			"alias":    server.Alias,
 			"database": db})
 		fields = map[string]interface{}{
-			"count": int64(count),
+			"posted": int64(count),
 		}
 		pt, _ = models.NewPoint("sir_db", tags, fields, time.Now())
 		pts = append(pts, pt)
@@ -231,6 +233,7 @@ func (server *HTTPInfluxServer) Stats() ([]models.Point, error) {
 // Returns nil if all good, otherwise error.
 func (server *HTTPInfluxServer) Post(bp client.BatchPoints) error {
 	server.concurrent <- struct{}{}
+	// TODO: manage conditional state
 	err := server.Client.Write(bp)
 	if err != nil {
 		if server.Debug {
@@ -264,6 +267,7 @@ func (server *HTTPInfluxServer) Run() error {
 	}
 
 	tick := time.NewTicker(server.PingFreq)
+	backlog := time.NewTicker(time.Minute)
 	// TODO: Add good start and watchdog logic
 
 MAINLOOP:
@@ -293,6 +297,8 @@ MAINLOOP:
 					}
 				}
 			}
+		case <-backlog.C:
+			// handle backlog here -- one day
 
 		}
 	}
