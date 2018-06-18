@@ -40,6 +40,7 @@ type HTTPInfluxServer struct {
 	DbCounters      map[string]uint64
 	DbCountersMutex sync.Mutex
 	Debug           bool
+	Buffering       bool
 }
 
 // NewHTTPInfluxServer is a
@@ -70,6 +71,7 @@ func NewHTTPInfluxServer(alias string, dbregex []string, httpConfig *client.HTTP
 		Debug:           false,
 		DbCounters:      make(map[string]uint64, 0),
 		DbCountersMutex: sync.Mutex{},
+		Buffering:       false,
 	}, nil
 }
 
@@ -122,6 +124,7 @@ type HTTPInfluxServerConfig struct {
 	ConcurrentRq     int      `toml:"max_concurrent_requests"`
 	PingFrequency    duration `toml:"ping_frequency"`
 	Debug            bool     `toml:"debug"`
+	Buffering        bool     `toml:"buffering"`
 }
 
 func (d *duration) UnmarshalText(text []byte) error {
@@ -177,6 +180,7 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 	new.DbCounters = make(map[string]uint64)
 	new.DbCountersMutex = sync.Mutex{}
 	new.Debug = c.Debug
+	new.Buffering = c.Buffering
 
 	return new
 }
@@ -229,15 +233,16 @@ func (server *HTTPInfluxServer) Stats() ([]models.Point, error) {
 	return pts, nil
 }
 
-// Post is the main posting function.
+// _port is the internal main posting function.
 // Returns nil if all good, otherwise error.
-func (server *HTTPInfluxServer) Post(bp client.BatchPoints) error {
+func (server *HTTPInfluxServer) _post(bp client.BatchPoints) error {
 	server.concurrent <- struct{}{}
 	// TODO: manage conditional state
 	err := server.Client.Write(bp)
 	if err != nil {
 		if server.Debug {
 			log.Printf("Couldn't post to Influx server %v: %v", server.Alias, err)
+			return err
 		}
 		// TODO: something smart
 	} else {
@@ -254,6 +259,19 @@ func (server *HTTPInfluxServer) Post(bp client.BatchPoints) error {
 	// at the moment, pass the post err as is
 	return err
 }
+
+// Post is a wrapper around internal _post,
+// allowing smarter decision making.
+func (server *HTTPInfluxServer) Post(bp client.BatchPoints) error {
+
+	err := server._post(bp)
+	return err
+
+}
+
+// func (server *HTTPInfluxServer) FlushBacklogDuring(t time.Duration) {
+
+// }
 
 // Run is the main loop
 func (server *HTTPInfluxServer) Run() error {
@@ -299,6 +317,11 @@ MAINLOOP:
 			}
 		case <-backlog.C:
 			// handle backlog here -- one day
+			state := atomic.LoadUint32(&server.Status)
+			if state == ServerStateActive {
+				// backlog reading
+
+			}
 
 		}
 	}
