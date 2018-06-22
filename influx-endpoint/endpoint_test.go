@@ -154,6 +154,7 @@ func TestEndpointWrite(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		err = c.Ping()
 	}
+	time.Sleep(100 * time.Millisecond)
 	t.Logf("Sending some points, status: %v", c.Status)
 	err = c.Post(createBatch())
 	if err != nil {
@@ -296,6 +297,8 @@ func TestEndpointHTTPEndpointEnabledBuffererDifferentPath(t *testing.T) {
 	if len(h.Bufferer.Index) < 1 {
 		t.Errorf("Bufferer did not populate: %v", h.Bufferer.Index)
 	}
+	// trigger a manual
+	h.ProcessBacklog()
 	h.Shutdown <- struct{}{}
 	wg.Wait()
 

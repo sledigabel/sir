@@ -303,7 +303,7 @@ func (server *HTTPInfluxServer) Post(bp client.BatchPoints) error {
 
 }
 
-func (server *HTTPInfluxServer) FlushBacklogDuring() error {
+func (server *HTTPInfluxServer) ProcessBacklog() error {
 	for {
 		bp, err := server.Bufferer.Pop()
 		if err != nil {
@@ -380,7 +380,7 @@ MAINLOOP:
 				go func() {
 					if !flushing {
 						flushing = true
-						if err := server.FlushBacklogDuring(); err != nil {
+						if err := server.ProcessBacklog(); err != nil {
 							log.Printf("Error while flushing buffer: %v", err)
 						}
 
