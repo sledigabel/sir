@@ -22,7 +22,7 @@ debug = true
 
 [internal]
 enable = true
-frequency = "5s"
+frequency = "30s"
 
 [backend]
 
@@ -33,6 +33,7 @@ frequency = "5s"
 	secure = false
 	debug = true
 	timeout = "40s"
+	buffering = true
 
 `
 
