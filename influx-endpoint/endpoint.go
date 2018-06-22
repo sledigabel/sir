@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,6 +42,7 @@ type HTTPInfluxServer struct {
 	DbCountersMutex sync.Mutex
 	Debug           bool
 	Buffering       bool
+	Bufferer        *Bufferer
 }
 
 // NewHTTPInfluxServer is a
@@ -72,6 +74,7 @@ func NewHTTPInfluxServer(alias string, dbregex []string, httpConfig *client.HTTP
 		DbCounters:      make(map[string]uint64, 0),
 		DbCountersMutex: sync.Mutex{},
 		Buffering:       false,
+		Bufferer:        NewBufferer(),
 	}, nil
 }
 
@@ -125,6 +128,8 @@ type HTTPInfluxServerConfig struct {
 	PingFrequency    duration `toml:"ping_frequency"`
 	Debug            bool     `toml:"debug"`
 	Buffering        bool     `toml:"buffering"`
+	BufferPath       string   `toml:"buffer_path"`
+	BufferFlushFreq  duration `toml:"buffer_flush_frequency"`
 }
 
 func (d *duration) UnmarshalText(text []byte) error {
@@ -181,7 +186,17 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 	new.DbCountersMutex = sync.Mutex{}
 	new.Debug = c.Debug
 	new.Buffering = c.Buffering
-
+	if new.Buffering {
+		new.Bufferer = NewBufferer()
+		if c.BufferPath != "" {
+			new.Bufferer.RootPath = filepath.Join(c.BufferPath, new.Alias)
+		} else {
+			new.Bufferer.RootPath = new.Alias
+		}
+		if c.BufferFlushFreq.Duration.String() != "0s" {
+			new.Bufferer.FlushFrequency = c.BufferFlushFreq.Duration
+		}
+	}
 	return new
 }
 
@@ -195,11 +210,12 @@ func (server *HTTPInfluxServer) Ping() error {
 	}
 	_, _, err := server.Client.Ping(server.Config.Timeout)
 	if err != nil && (state == ServerStateActive || state == ServerStateDrop) {
+		log.Printf("Failing server: %v", server.Alias)
 		atomic.StoreUint32(&server.Status, ServerStateFailed)
-	} else {
-		if state == ServerStateFailed {
-			atomic.StoreUint32(&server.Status, ServerStateActive)
-		}
+	}
+	if err == nil && state != ServerStateActive {
+		log.Printf("Restoring server: %v", server.Alias)
+		atomic.StoreUint32(&server.Status, ServerStateActive)
 	}
 	return err
 }
@@ -211,6 +227,7 @@ func (server *HTTPInfluxServer) Stats() ([]models.Point, error) {
 		"alias": server.Alias,
 	})
 	server.DbCountersMutex.Lock()
+	defer server.DbCountersMutex.Unlock()
 	fields := map[string]interface{}{
 		"active_req": len(server.concurrent),
 		"state":      int(atomic.LoadUint32(&server.Status)),
@@ -229,7 +246,13 @@ func (server *HTTPInfluxServer) Stats() ([]models.Point, error) {
 		pt, _ = models.NewPoint("sir_db", tags, fields, time.Now())
 		pts = append(pts, pt)
 	}
-	server.DbCountersMutex.Unlock()
+	if server.Buffering {
+		bpt, _ := server.Bufferer.Stats()
+		for _, p := range bpt {
+			p.AddTag("alias", server.Alias)
+			pts = append(pts, p)
+		}
+	}
 	return pts, nil
 }
 
@@ -242,9 +265,9 @@ func (server *HTTPInfluxServer) _post(bp client.BatchPoints) error {
 	if err != nil {
 		if server.Debug {
 			log.Printf("Couldn't post to Influx server %v: %v", server.Alias, err)
-			return err
 		}
-		// TODO: something smart
+		server.Ping()
+		return err
 	} else {
 		server.DbCountersMutex.Lock()
 		server.PostCounter += uint64(len(bp.Points()))
@@ -264,17 +287,55 @@ func (server *HTTPInfluxServer) _post(bp client.BatchPoints) error {
 // allowing smarter decision making.
 func (server *HTTPInfluxServer) Post(bp client.BatchPoints) error {
 
+	if atomic.LoadUint32(&server.Status) != ServerStateActive {
+		if server.Buffering {
+			server.Bufferer.Input <- bp
+			return nil
+		}
+		return fmt.Errorf("Server %v is not active", server.Alias)
+	}
 	err := server._post(bp)
+	if err != nil && server.Buffering {
+		server.Bufferer.Input <- bp
+		return nil
+	}
 	return err
 
 }
 
-// func (server *HTTPInfluxServer) FlushBacklogDuring(t time.Duration) {
-
-// }
+func (server *HTTPInfluxServer) FlushBacklogDuring() error {
+	for {
+		bp, err := server.Bufferer.Pop()
+		if err != nil {
+			return err
+		}
+		if bp == nil {
+			return nil
+		}
+		if err = server.Post(bp); err != nil {
+			return err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
 
 // Run is the main loop
 func (server *HTTPInfluxServer) Run() error {
+
+	var bufferwg sync.WaitGroup
+	if server.Buffering {
+		if err := server.Bufferer.Init(); err != nil {
+			log.Fatalf("Could not initialise server %v: %v", server.Alias, err)
+		}
+		go func() {
+			bufferwg.Add(1)
+			err := server.Bufferer.Run()
+			if err != nil {
+				log.Fatalf("Bufferer for server %v failed: %v", server.Alias, err)
+			}
+			bufferwg.Done()
+		}()
+	}
 
 	if atomic.LoadUint32(&server.Status) != ServerStateSuspended {
 		atomic.StoreUint32(&server.Status, ServerStateStarting)
@@ -286,6 +347,7 @@ func (server *HTTPInfluxServer) Run() error {
 
 	tick := time.NewTicker(server.PingFreq)
 	backlog := time.NewTicker(time.Minute)
+	var flushing bool
 	// TODO: Add good start and watchdog logic
 
 MAINLOOP:
@@ -297,6 +359,10 @@ MAINLOOP:
 				log.Printf("Received shutdown for server %v", server.Alias)
 			}
 			server.Close()
+			if server.Buffering {
+				server.Bufferer.Shutdown <- struct{}{}
+				bufferwg.Wait()
+			}
 			break MAINLOOP
 
 		case <-tick.C:
@@ -304,23 +370,23 @@ MAINLOOP:
 				log.Printf("Tick for server %v\n", server.Alias)
 			}
 			state := atomic.LoadUint32(&server.Status)
-			if server.Status != ServerStateSuspended {
-				err := server.Ping()
-				if err != nil && state == ServerStateActive {
-					log.Printf("Failed to ping server %v", server.Alias)
-					atomic.StoreUint32(&server.Status, ServerStateFailed)
-				} else {
-					if state != ServerStateActive {
-						atomic.StoreUint32(&server.Status, ServerStateActive)
-					}
-				}
+			if state != ServerStateSuspended {
+				server.Ping()
 			}
 		case <-backlog.C:
-			// handle backlog here -- one day
+			// handle backlog here
 			state := atomic.LoadUint32(&server.Status)
 			if state == ServerStateActive {
-				// backlog reading
+				go func() {
+					if !flushing {
+						flushing = true
+						if err := server.FlushBacklogDuring(); err != nil {
+							log.Printf("Error while flushing buffer: %v", err)
+						}
 
+						flushing = false
+					}
+				}()
 			}
 
 		}

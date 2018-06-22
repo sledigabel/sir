@@ -3,8 +3,11 @@ package endpoint
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/influxdata/influxdb/models"
@@ -23,10 +26,13 @@ type BufferFile struct {
 }
 
 type Bufferer struct {
-	Input    chan client.BatchPoints
-	Output   chan client.BatchPoints
-	Index    []*BufferFile
-	RootPath string
+	Input          chan client.BatchPoints
+	Output         chan client.BatchPoints
+	Index          []*BufferFile
+	RootPath       string
+	FlushFrequency time.Duration
+	Shutdown       chan struct{}
+	Lock           sync.Mutex
 }
 
 type BatchBuffer struct {
@@ -88,12 +94,62 @@ func NewBufferFileFromBP(bp client.BatchPoints) *BufferFile {
 	return &bf
 }
 
+func (bf *BufferFile) String() string {
+	return fmt.Sprintf("%s-%s-%s", bf.Database, bf.RetentionPolicy, bf.Precision)
+}
+
 func NewBufferer() *Bufferer {
-	var b Bufferer
+	b := Bufferer{}
 	b.Index = make([]*BufferFile, 0)
 	b.RootPath, _ = os.Getwd()
 	b.Input = make(chan client.BatchPoints, bufferSizeMax)
+	b.FlushFrequency = 5 * time.Minute
+	b.Shutdown = make(chan struct{})
 	return &b
+}
+
+type BufferSave struct {
+	Index []*BufferFile `json:"bufferfiles"`
+}
+
+func (b *Bufferer) SaveIndex() error {
+
+	bs := BufferSave{
+		Index: b.Index,
+	}
+	bytes, err := json.Marshal(bs)
+	if err != nil {
+		return err
+	}
+	fd, err := os.Create(filepath.Join(b.RootPath, "index.json"))
+	if err != nil {
+		return err
+	}
+	defer fd.Close()
+	fd.Write(bytes)
+	return nil
+}
+
+func (b *Bufferer) LoadIndex() error {
+	var bs BufferSave
+	if _, err := os.Stat(filepath.Join(b.RootPath, "index.json")); err != nil {
+		b.Index = make([]*BufferFile, 0)
+		return nil
+	}
+	fd, err := os.Open(filepath.Join(b.RootPath, "index.json"))
+	if err != nil {
+		return err
+	}
+	bytes, err := ioutil.ReadAll(fd)
+	if err != nil {
+		return err
+	}
+	if err = json.Unmarshal(bytes, &bs); err != nil {
+		return err
+	}
+	b.Index = bs.Index
+	return nil
+
 }
 
 func (b *Bufferer) Init() error {
@@ -113,12 +169,19 @@ func (b *Bufferer) Init() error {
 	f.Close()
 	defer os.Remove(fp)
 
+	// insert here all the magic to recover from stop
+	err = b.LoadIndex()
+	if err != nil {
+		return fmt.Errorf("Unable to load index: %v", err)
+	}
+
 	return err
 
 }
 
 func (b *Bufferer) Write(bp client.BatchPoints) error {
-
+	b.Lock.Lock()
+	defer b.Lock.Unlock()
 	bf := NewBufferFileFromBP(bp)
 	f, err := os.Create(filepath.Join(b.RootPath, bf.Filename))
 	if err != nil {
@@ -139,7 +202,6 @@ func (b *Bufferer) Write(bp client.BatchPoints) error {
 	}
 
 	b.Index = append(b.Index, bf)
-
 	return nil
 }
 
@@ -162,7 +224,6 @@ EMPTYCHANNEL:
 		default:
 			break EMPTYCHANNEL
 		}
-
 	}
 
 	for _, batch := range batches {
@@ -170,9 +231,64 @@ EMPTYCHANNEL:
 			return err
 		}
 	}
-
 	return nil
+}
 
+// Pop returns the first (oldest) element of the index
+func (b *Bufferer) Pop() (client.BatchPoints, error) {
+
+	b.Lock.Lock()
+	defer b.Lock.Unlock()
+	if len(b.Index) == 0 {
+		return nil, nil
+	}
+
+	bb := BatchBuffer{}
+	fd, err := os.Open(filepath.Join(b.RootPath, b.Index[0].Filename))
+	if err != nil {
+		return nil, err
+	}
+	bf, err := ioutil.ReadAll(fd)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = json.Unmarshal(bf, &bb); err != nil {
+		return nil, err
+	}
+
+	bp, err := bb.BatchPoints()
+	if err != nil {
+		return nil, err
+	}
+
+	b.Index = b.Index[1:]
+	return bp, nil
+
+}
+
+func (b *Bufferer) Run() error {
+
+	t := time.NewTicker(b.FlushFrequency)
+BUFFERERLOOP:
+	for {
+		select {
+		case <-t.C:
+			if len(b.Input) > 0 {
+				log.Println("Flushing down")
+				if err := b.Flush(); err != nil {
+					return err
+				}
+			}
+
+		case <-b.Shutdown:
+			log.Println("Shutting down")
+			b.Flush()
+			b.SaveIndex()
+			break BUFFERERLOOP
+		}
+	}
+	return nil
 }
 
 // func (b *Bufferer) Archive(bp client.BatchPoints) error {
@@ -181,13 +297,31 @@ EMPTYCHANNEL:
 // 	// add to index
 // }
 
-// func (b *Bufferer) Stats() error {
+func (b *Bufferer) Stats() ([]models.Point, error) {
 
-// }
+	var pts []models.Point
+	// TODO: add individual db stats
+	b.Lock.Lock()
+	defer b.Lock.Unlock()
+	tags := models.NewTags(map[string]string{})
+
+	var s int
+	for _, bf := range b.Index {
+		s += bf.NumMetrics
+	}
+	fields := map[string]interface{}{
+		"files":       len(b.Index),
+		"num_metrics": s,
+	}
+
+	pt, _ := models.NewPoint("sir_relaybuffer", tags, fields, time.Now())
+	pts = append(pts, pt)
+	return pts, nil
+}
 
 // func (b *Bufferer) Flush() error {
 
-// }
+// }s
 
 // func (b *Bufferer) Stop() error {
 

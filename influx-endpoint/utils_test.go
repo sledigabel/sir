@@ -9,6 +9,7 @@ import (
 
 func emptyTestServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// b, _ := ioutil.ReadAll(r.Body)
 		ioutil.ReadAll(r.Body)
 		//log.Printf("Received: %v\nContent: %v", r, string(b))
 		time.Sleep(50 * time.Millisecond)

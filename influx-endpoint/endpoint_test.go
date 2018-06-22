@@ -2,6 +2,7 @@ package endpoint_test
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -101,7 +102,6 @@ func TestHTTPInfluxServerRun(t *testing.T) {
 		wg.Done()
 	}()
 	// wait 5s to simulate some activity
-
 	time.Sleep(1 * time.Second)
 	// sending shutdown
 	t.Log("Sending shutdown msg")
@@ -137,34 +137,166 @@ func TestEndpointWrite(t *testing.T) {
 	defer ts.Close()
 	c, err := endpoint.NewHTTPInfluxServer(
 		"test", []string{"test"}, &client.HTTPConfig{Addr: ts.URL})
+	c.PingFreq = time.Minute
+	if err != nil {
+		t.Errorf("Couldn't connect on empty config: %v", err)
+	}
+	wg.Add(1)
+	go func() {
+		err := c.Run()
+		if err != nil {
+			t.Errorf("Error when running endpoint: %v", err)
+		}
+		wg.Done()
+	}()
+	// wait to simulate some activity
+	for c.Status != endpoint.ServerStateActive {
+		time.Sleep(100 * time.Millisecond)
+		err = c.Ping()
+	}
+	t.Logf("Sending some points, status: %v", c.Status)
+	err = c.Post(createBatch())
+	if err != nil {
+		t.Errorf("Unable to post dummy data: %v", err)
+	}
+	pt, err := c.Stats()
+	if err != nil {
+		t.Errorf("Unable to read stats on server %v: %v", c.Alias, err)
+	}
+	if len(pt) > 0 && string(pt[0].Name()) != "sir_backend" {
+		t.Errorf("Statistic has the wrong name: %v", pt[0].Name())
+	}
+	// sending shutdown
+	c.Shutdown <- struct{}{}
+	wg.Wait()
+}
+
+func TestEndpointWriteFailed(t *testing.T) {
+	var wg sync.WaitGroup
+	c, err := endpoint.NewHTTPInfluxServer(
+		"test", []string{"test"}, &client.HTTPConfig{Addr: "http://localhost:12345"})
 	c.PingFreq = 100 * time.Millisecond
 	if err != nil {
 		t.Errorf("Couldn't connect on empty config: %v", err)
 	}
 	wg.Add(1)
 	go func() {
-		c.Run()
+		err := c.Run()
+		if err != nil {
+			t.Errorf("Error when running endpoint: %v", err)
+		}
 		wg.Done()
 	}()
-	// wait 5s to simulate some activity
-
-	time.Sleep(1 * time.Second)
 	t.Log("Sending some points")
 	err = c.Post(createBatch())
-	if err != nil {
-		t.Fatalf("Unable to post dummy data")
+	if err == nil {
+		t.Errorf("Should have failed posting dummy data: %v", err)
 	}
-	pt, err := c.Stats()
+	_, err = c.Stats()
 	if err != nil {
-		t.Fatalf("Unable to read stats on server: %v", c.Alias)
-	}
-	t.Logf("Stats: %v", pt)
-	if len(pt) > 0 && string(pt[0].Name()) != "sir_backend" {
-		t.Fatalf("Statistic has the wrong name: %v", pt[0].Name())
+		t.Errorf("Unable to read stats on server %v: %v", c.Alias, err)
 	}
 	// sending shutdown
-	t.Log("Sending shutdown msg")
 	c.Shutdown <- struct{}{}
 	wg.Wait()
-	t.Log("Completed shutdown")
+}
+
+func TestEndpointHTTPEndpointEmptyBufferer(t *testing.T) {
+
+	config := `
+	server_name = "test"
+	alias = "test"
+	`
+	hc, err := endpoint.NewHTTPInfluxServerParseConfig(config)
+	if err != nil {
+		t.Errorf("Could not parse config: %v", err)
+	}
+	h := endpoint.NewHTTPInfluxServerFromConfig(hc)
+	if h.Buffering || h.Bufferer != nil {
+		t.Error("Error: Buffering created or activated")
+	}
+}
+
+func TestEndpointHTTPEndpointEnabledBuffererDefaultPath(t *testing.T) {
+
+	config := `
+	server_name = "test"
+	alias = "test"
+	buffering = true
+	`
+	hc, err := endpoint.NewHTTPInfluxServerParseConfig(config)
+	if err != nil {
+		t.Errorf("Could not parse config: %v", err)
+	}
+	h := endpoint.NewHTTPInfluxServerFromConfig(hc)
+	if h.Buffering == false || h.Bufferer == nil {
+		t.Error("Error: Buffering not created or activated")
+	}
+
+	if h.Bufferer.RootPath != h.Alias {
+		t.Error("Default path not set to alias")
+	}
+
+}
+
+func TestEndpointHTTPEndpointEnabledBuffererDifferentPath(t *testing.T) {
+
+	config := `
+	server_name = "localhost"
+	port = 12345
+	alias = "test"
+	ping_frequency = "100ms"
+	buffering = true
+	buffer_path = "blahblah"
+	buffer_flush_frequency = "1s"
+	`
+	hc, err := endpoint.NewHTTPInfluxServerParseConfig(config)
+	if err != nil {
+		t.Errorf("Could not parse config: %v", err)
+	}
+	h := endpoint.NewHTTPInfluxServerFromConfig(hc)
+	if h.Buffering == false || h.Bufferer == nil {
+		t.Error("Error: Buffering not created or activated")
+	}
+
+	if h.Bufferer.RootPath != "blahblah/test" {
+		t.Error("Default path not set correctly")
+	}
+	if h.Bufferer.FlushFrequency.Seconds() != 1 {
+		t.Error("Wrong buffer flush frequency")
+		t.Log(h.Bufferer)
+	}
+
+	defer os.RemoveAll("blahblah")
+	var wg sync.WaitGroup
+	go func() {
+		wg.Add(1)
+		err := h.Run()
+		if err != nil {
+			t.Errorf("Error during endpoint run: %v", err)
+		}
+		wg.Done()
+	}()
+
+	// wait for server to be declared as failed
+	for h.Status != endpoint.ServerStateFailed {
+		time.Sleep(time.Second)
+		fmt.Println(h.Status)
+	}
+	bp1 := createBatch()
+	bp2 := createBatch()
+	if err = h.Post(bp1); err != nil {
+		t.Errorf("Should not catch exception here: %v", err)
+	}
+	if err = h.Post(bp2); err != nil {
+		t.Errorf("Should not catch exception here: %v", err)
+	}
+	// wait here for flush
+	time.Sleep(2 * time.Second)
+	if len(h.Bufferer.Index) < 1 {
+		t.Errorf("Bufferer did not populate: %v", h.Bufferer.Index)
+	}
+	h.Shutdown <- struct{}{}
+	wg.Wait()
+
 }

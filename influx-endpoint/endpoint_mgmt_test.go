@@ -1,6 +1,7 @@
 package endpoint_test
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -150,6 +151,7 @@ func TestEndpointMgmtNewStats(t *testing.T) {
 		[server.1]
 		alias = "test1"
 		enable = false
+		buffering = true
 
 		[server.2]
 		alias = "test2"
@@ -159,7 +161,7 @@ func TestEndpointMgmtNewStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error creating the 2 servers")
 	}
-
+	defer os.RemoveAll("test1")
 	go mgr.Run()
 	bp, err := mgr.Stats()
 	if err != nil {
