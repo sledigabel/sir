@@ -31,7 +31,11 @@
 
 [[constraint]]
   name = "github.com/influxdata/influxdb"
-  version = "1.5.4"
+  version = "1.6.0"
+
+[[constraint]]
+  name = "github.com/segmentio/ksuid"
+  version = "1.0.1"
 
 [prune]
   go-tests = true
