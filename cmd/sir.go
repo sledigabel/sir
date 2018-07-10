@@ -11,7 +11,7 @@ import (
 	"github.com/sledigabel/sir/relay"
 )
 
-var defaultConf string = `
+var defaultConf = `
 debug = true
 
 [listener]
@@ -22,7 +22,7 @@ debug = true
 
 [internal]
 enable = true
-frequency = "30s"
+frequency = "5s"
 
 [backend]
 
@@ -33,7 +33,6 @@ frequency = "30s"
 	secure = false
 	debug = true
 	timeout = "40s"
-	buffering = true
 
 `
 
@@ -54,7 +53,7 @@ func main() {
 	} else {
 		b, err := ioutil.ReadAll(fd)
 		if err != nil {
-			log.Fatalf("Configuration file %v not readable")
+			log.Fatalf("Configuration file %v not readable", *config)
 		}
 		confstring = string(b)
 	}

@@ -99,7 +99,6 @@ type myconf struct {
 func NewHTTPParseConfig(conf string) (*HTTPConf, error) {
 	l := myconf{}
 	_, err := toml.Decode(conf, &l)
-	log.Printf("%v", l)
 	hc := HTTPConf(l.Listener)
 	return &hc, err
 }

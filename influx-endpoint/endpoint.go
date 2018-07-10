@@ -170,7 +170,11 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 	new.Config.InsecureSkipVerify = c.UnsafeSSL
 	new.Config.Username = c.Username
 	new.Config.Password = c.Password
-	new.Config.Timeout = c.Timeout.toTimeDuration()
+	if c.Timeout.Duration.String() != "0s" {
+		new.Config.Timeout = c.Timeout.toTimeDuration()
+	} else {
+		new.Config.Timeout, _ = time.ParseDuration("30s")
+	}
 	new.Shutdown = make(chan struct{})
 	if c.ConcurrentRq > 0 {
 		new.NumRq = uint(c.ConcurrentRq)
@@ -195,6 +199,8 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 		}
 		if c.BufferFlushFreq.Duration.String() != "0s" {
 			new.Bufferer.FlushFrequency = c.BufferFlushFreq.Duration
+		} else {
+			new.Bufferer.FlushFrequency, _ = time.ParseDuration("10s")
 		}
 	}
 	return new
@@ -210,11 +216,11 @@ func (server *HTTPInfluxServer) Ping() error {
 	}
 	_, _, err := server.Client.Ping(server.Config.Timeout)
 	if err != nil && (state == ServerStateActive || state == ServerStateDrop) {
-		log.Printf("Failing server: %v", server.Alias)
+		log.Printf("Check for server %v failed (%v)", server.Alias, err)
 		atomic.StoreUint32(&server.Status, ServerStateFailed)
 	}
 	if err == nil && state != ServerStateActive {
-		log.Printf("Restoring server: %v", server.Alias)
+		log.Printf("Check successful for server %v", server.Alias)
 		atomic.StoreUint32(&server.Status, ServerStateActive)
 	}
 	return err
@@ -303,26 +309,37 @@ func (server *HTTPInfluxServer) Post(bp client.BatchPoints) error {
 
 }
 
-func (server *HTTPInfluxServer) ProcessBacklog() error {
+func (server *HTTPInfluxServer) ProcessBacklog(stop chan struct{}) error {
+	// processing 40 per minute by default
+	backlog := time.NewTicker(15 * time.Millisecond)
+LOOP:
 	for {
-		bp, err := server.Bufferer.Pop()
-		if err != nil {
-			return err
+		select {
+		case <-stop:
+			break LOOP
+		case <-backlog.C:
+			if server.Status == ServerStateActive {
+				bp, err := server.Bufferer.Pop()
+				if err != nil {
+					return err
+				}
+				if bp != nil {
+					if err = server.Post(bp); err != nil {
+						return err
+					}
+				}
+			}
 		}
-		if bp == nil {
-			return nil
-		}
-		if err = server.Post(bp); err != nil {
-			return err
-		}
-		time.Sleep(100 * time.Millisecond)
+
 	}
+	return nil
 }
 
 // Run is the main loop
 func (server *HTTPInfluxServer) Run() error {
 
 	var bufferwg sync.WaitGroup
+	bufferbacklog := make(chan struct{})
 	if server.Buffering {
 		if err := server.Bufferer.Init(); err != nil {
 			log.Fatalf("Could not initialise server %v: %v", server.Alias, err)
@@ -330,6 +347,14 @@ func (server *HTTPInfluxServer) Run() error {
 		go func() {
 			bufferwg.Add(1)
 			err := server.Bufferer.Run()
+			if err != nil {
+				log.Fatalf("Bufferer for server %v failed: %v", server.Alias, err)
+			}
+			bufferwg.Done()
+		}()
+		go func() {
+			bufferwg.Add(1)
+			err := server.ProcessBacklog(bufferbacklog)
 			if err != nil {
 				log.Fatalf("Bufferer for server %v failed: %v", server.Alias, err)
 			}
@@ -343,12 +368,12 @@ func (server *HTTPInfluxServer) Run() error {
 			atomic.StoreUint32(&server.Status, ServerStateFailed)
 			return err
 		}
+		if err := server.Ping(); err != nil {
+			log.Printf("Error while connecting to server %v: %v", server.Alias, err)
+		}
 	}
 
 	tick := time.NewTicker(server.PingFreq)
-	backlog := time.NewTicker(time.Minute)
-	var flushing bool
-	// TODO: Add good start and watchdog logic
 
 MAINLOOP:
 	for {
@@ -361,34 +386,16 @@ MAINLOOP:
 			server.Close()
 			if server.Buffering {
 				server.Bufferer.Shutdown <- struct{}{}
+				bufferbacklog <- struct{}{}
 				bufferwg.Wait()
 			}
 			break MAINLOOP
 
 		case <-tick.C:
-			if server.Debug {
-				log.Printf("Tick for server %v\n", server.Alias)
-			}
 			state := atomic.LoadUint32(&server.Status)
 			if state != ServerStateSuspended {
 				server.Ping()
 			}
-		case <-backlog.C:
-			// handle backlog here
-			state := atomic.LoadUint32(&server.Status)
-			if state == ServerStateActive {
-				go func() {
-					if !flushing {
-						flushing = true
-						if err := server.ProcessBacklog(); err != nil {
-							log.Printf("Error while flushing buffer: %v", err)
-						}
-
-						flushing = false
-					}
-				}()
-			}
-
 		}
 	}
 

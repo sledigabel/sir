@@ -130,14 +130,16 @@ func TestEndpointMgmtNewPost(t *testing.T) {
 		t.Fatalf("simple not in endpoint list")
 	}
 	mgr.Endpoints["simple"].Config.Addr = ts.URL
+	t.Logf("Endpoint: %v", ts.URL)
 
 	go mgr.Run()
-	time.Sleep(time.Second)
+	//time.Sleep(time.Second)
 	pts := createBatch()
 	err = mgr.Post(pts)
 	if err != nil {
-		t.Fatal("Failed posting example points")
+		t.Fatalf("Failed posting example points: %v", err)
 	}
+
 	time.Sleep(time.Second)
 	mgr.Shutdown <- struct{}{}
 	t.Log("Shutdown Completed")

@@ -133,11 +133,15 @@ func createBatch() client.BatchPoints {
 
 func TestEndpointWrite(t *testing.T) {
 	var wg sync.WaitGroup
+
 	ts := emptyTestServer()
 	defer ts.Close()
+
 	c, err := endpoint.NewHTTPInfluxServer(
 		"test", []string{"test"}, &client.HTTPConfig{Addr: ts.URL})
-	c.PingFreq = time.Minute
+	t.Logf("Endpoint: %v", ts.URL)
+
+	c.PingFreq = time.Second
 	if err != nil {
 		t.Errorf("Couldn't connect on empty config: %v", err)
 	}
@@ -150,10 +154,12 @@ func TestEndpointWrite(t *testing.T) {
 		wg.Done()
 	}()
 	// wait to simulate some activity
+	c.Ping()
 	for c.Status != endpoint.ServerStateActive {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		err = c.Ping()
 	}
+
 	time.Sleep(100 * time.Millisecond)
 	t.Logf("Sending some points, status: %v", c.Status)
 	err = c.Post(createBatch())
@@ -175,7 +181,7 @@ func TestEndpointWrite(t *testing.T) {
 func TestEndpointWriteFailed(t *testing.T) {
 	var wg sync.WaitGroup
 	c, err := endpoint.NewHTTPInfluxServer(
-		"test", []string{"test"}, &client.HTTPConfig{Addr: "http://localhost:12345"})
+		"test", []string{"test"}, &client.HTTPConfig{Addr: "http://127.0.0.1:12345"})
 	c.PingFreq = 100 * time.Millisecond
 	if err != nil {
 		t.Errorf("Couldn't connect on empty config: %v", err)
@@ -298,7 +304,10 @@ func TestEndpointHTTPEndpointEnabledBuffererDifferentPath(t *testing.T) {
 		t.Errorf("Bufferer did not populate: %v", h.Bufferer.Index)
 	}
 	// trigger a manual
-	h.ProcessBacklog()
+	stop := make(chan struct{})
+	go h.ProcessBacklog(stop)
+	time.Sleep(time.Second)
+	stop <- struct{}{}
 	h.Shutdown <- struct{}{}
 	wg.Wait()
 

@@ -13,6 +13,7 @@ import (
 	"github.com/influxdata/influxdb/models"
 
 	"github.com/influxdata/influxdb/client/v2"
+	"github.com/segmentio/ksuid"
 )
 
 var bufferSizeMax = 10000
@@ -83,12 +84,13 @@ func NewBufferFile() *BufferFile {
 
 func NewBufferFileFromBP(bp client.BatchPoints) *BufferFile {
 
+	id := ksuid.New()
 	bf := BufferFile{
 		Database:        bp.Database(),
 		RetentionPolicy: bp.RetentionPolicy(),
 		Precision:       bp.Precision(),
 		NumMetrics:      len(bp.Points()),
-		Filename:        fmt.Sprintf("%d-%s-%s-%s.json", time.Now().UnixNano(), bp.Database(), bp.RetentionPolicy(), bp.Precision()),
+		Filename:        id.String(),
 	}
 
 	return &bf
@@ -148,6 +150,8 @@ func (b *Bufferer) LoadIndex() error {
 		return err
 	}
 	b.Index = bs.Index
+	// successful load, deleting index.json
+	os.Remove(filepath.Join(b.RootPath, "index.json"))
 	return nil
 
 }
@@ -252,6 +256,7 @@ func (b *Bufferer) Pop() (client.BatchPoints, error) {
 	if err != nil {
 		return nil, err
 	}
+	fd.Close()
 
 	if err = json.Unmarshal(bf, &bb); err != nil {
 		return nil, err
@@ -262,8 +267,9 @@ func (b *Bufferer) Pop() (client.BatchPoints, error) {
 		return nil, err
 	}
 
+	err = os.Remove(filepath.Join(b.RootPath, b.Index[0].Filename))
 	b.Index = b.Index[1:]
-	return bp, nil
+	return bp, err
 
 }
 
@@ -275,7 +281,6 @@ BUFFERERLOOP:
 		select {
 		case <-t.C:
 			if len(b.Input) > 0 {
-				log.Println("Flushing down")
 				if err := b.Flush(); err != nil {
 					return err
 				}
