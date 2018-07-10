@@ -14,12 +14,18 @@
     "models",
     "pkg/escape"
   ]
-  revision = "4e4e00bc5ab85a3ff5e988c91020cf0399a87026"
-  version = "v1.5.4"
+  revision = "62ab18a0f43ee342b84debaaae5486b8b2d8682c"
+  version = "v1.6.0"
+
+[[projects]]
+  name = "github.com/segmentio/ksuid"
+  packages = ["."]
+  revision = "112f929a3020abfcd06b77c963ec919130796a35"
+  version = "1.0.1"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "4993d6e44930ceec8cf16bfdaa40f8b954ec97f47add4d33652dcc3cb5708161"
+  inputs-digest = "c93b8459349c92cc39feb4ee9e744fb51423f3136bad6f6d46ff024b17a15b72"
   solver-name = "gps-cdcl"
   solver-version = 1
