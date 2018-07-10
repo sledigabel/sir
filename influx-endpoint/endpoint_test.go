@@ -182,7 +182,7 @@ func TestEndpointWriteFailed(t *testing.T) {
 	var wg sync.WaitGroup
 	c, err := endpoint.NewHTTPInfluxServer(
 		"test", []string{"test"}, &client.HTTPConfig{Addr: "http://127.0.0.1:12345"})
-	c.PingFreq = 100 * time.Millisecond
+	c.PingFreq = 10 * time.Millisecond
 	if err != nil {
 		t.Errorf("Couldn't connect on empty config: %v", err)
 	}
@@ -194,6 +194,7 @@ func TestEndpointWriteFailed(t *testing.T) {
 		}
 		wg.Done()
 	}()
+	time.Sleep(100 * time.Millisecond)
 	t.Log("Sending some points")
 	err = c.Post(createBatch())
 	if err == nil {

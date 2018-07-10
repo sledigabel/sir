@@ -119,7 +119,6 @@ func TestEndpointMgmtNewPost(t *testing.T) {
 	[servers]
 		[server.1]
 		alias = "simple"
-		enable = true
 	`
 	mgr, err := endpoint.NewHTTPInfluxServerMgrFromConfig(config)
 	if err != nil {
@@ -133,7 +132,7 @@ func TestEndpointMgmtNewPost(t *testing.T) {
 	t.Logf("Endpoint: %v", ts.URL)
 
 	go mgr.Run()
-	//time.Sleep(time.Second)
+	time.Sleep(100 * time.Millisecond)
 	pts := createBatch()
 	err = mgr.Post(pts)
 	if err != nil {
@@ -152,12 +151,12 @@ func TestEndpointMgmtNewStats(t *testing.T) {
 	[servers]
 		[server.1]
 		alias = "test1"
-		enable = false
+		disable = true
 		buffering = true
 
 		[server.2]
 		alias = "test2"
-		enable = false
+		disable = true
 	`
 	mgr, err := endpoint.NewHTTPInfluxServerMgrFromConfig(config)
 	if err != nil {
