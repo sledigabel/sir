@@ -18,6 +18,7 @@ import (
 
 var bufferSizeMax = 10000
 
+// BufferFile is the struct describing a batch as a buffer
 type BufferFile struct {
 	Filename        string `json:"filename"`
 	NumMetrics      int    `json:"num_metrics"`
@@ -26,6 +27,7 @@ type BufferFile struct {
 	Precision       string `json:"precision"`
 }
 
+// Bufferer is the main buffering struct
 type Bufferer struct {
 	Input          chan client.BatchPoints
 	Output         chan client.BatchPoints
@@ -36,6 +38,7 @@ type Bufferer struct {
 	Lock           sync.Mutex
 }
 
+// BatchBuffer is the marshalling struct for batches
 type BatchBuffer struct {
 	Database        string `json:"database"`
 	RetentionPolicy string `json:"retention_policy"`
@@ -43,6 +46,7 @@ type BatchBuffer struct {
 	Points          string `json:"points"`
 }
 
+// NewBatchBufferFromBP creates a BatchBuffer from a batch
 func NewBatchBufferFromBP(bp client.BatchPoints) *BatchBuffer {
 	bb := BatchBuffer{
 		Database:        bp.Database(),
@@ -59,6 +63,7 @@ func NewBatchBufferFromBP(bp client.BatchPoints) *BatchBuffer {
 	return &bb
 }
 
+// BatchPoints converts a BatchBuffer into a batch
 func (b *BatchBuffer) BatchPoints() (client.BatchPoints, error) {
 
 	bpc := client.BatchPointsConfig{
@@ -78,10 +83,12 @@ func (b *BatchBuffer) BatchPoints() (client.BatchPoints, error) {
 	return bp, err
 }
 
+// NewBufferFile instantiate a BufferFile
 func NewBufferFile() *BufferFile {
 	return &BufferFile{}
 }
 
+// NewBufferFileFromBP creates a BufferFile from a batch
 func NewBufferFileFromBP(bp client.BatchPoints) *BufferFile {
 
 	id := ksuid.New()
@@ -100,6 +107,7 @@ func (bf *BufferFile) String() string {
 	return fmt.Sprintf("%s-%s-%s", bf.Database, bf.RetentionPolicy, bf.Precision)
 }
 
+// NewBufferer creates a new Buffer
 func NewBufferer() *Bufferer {
 	b := Bufferer{}
 	b.Index = make([]*BufferFile, 0)
@@ -110,10 +118,12 @@ func NewBufferer() *Bufferer {
 	return &b
 }
 
+// BufferSave is the marshalling struct for Bufferers
 type BufferSave struct {
 	Index []*BufferFile `json:"bufferfiles"`
 }
 
+// SaveIndex marshalls a buffer into a file
 func (b *Bufferer) SaveIndex() error {
 
 	bs := BufferSave{
@@ -132,6 +142,7 @@ func (b *Bufferer) SaveIndex() error {
 	return nil
 }
 
+// LoadIndex loads up a previously saved Buffer and unmarshalls it
 func (b *Bufferer) LoadIndex() error {
 	var bs BufferSave
 	if _, err := os.Stat(filepath.Join(b.RootPath, "index.json")); err != nil {
@@ -156,6 +167,9 @@ func (b *Bufferer) LoadIndex() error {
 
 }
 
+// Init creates the Bufferer directory if needed and tests
+// if it can write into it, otherwise throws an error.
+// It will load any existing saved Buffer if found.
 func (b *Bufferer) Init() error {
 
 	// create dir if needs to
@@ -209,6 +223,9 @@ func (b *Bufferer) Write(bp client.BatchPoints) error {
 	return nil
 }
 
+// Flush triggers a Bufferer to write to disk
+// All the batches from the Input channel will be
+// flushed into BufferFiles and written to disk
 func (b *Bufferer) Flush() error {
 
 	batches := make(map[string]client.BatchPoints)
@@ -273,6 +290,7 @@ func (b *Bufferer) Pop() (client.BatchPoints, error) {
 
 }
 
+// Run is the main function
 func (b *Bufferer) Run() error {
 
 	t := time.NewTicker(b.FlushFrequency)
@@ -296,12 +314,7 @@ BUFFERERLOOP:
 	return nil
 }
 
-// func (b *Bufferer) Archive(bp client.BatchPoints) error {
-// 	// add file
-
-// 	// add to index
-// }
-
+// Stats collects statistics from the Bufferer
 func (b *Bufferer) Stats() ([]models.Point, error) {
 
 	var pts []models.Point
@@ -323,11 +336,3 @@ func (b *Bufferer) Stats() ([]models.Point, error) {
 	pts = append(pts, pt)
 	return pts, nil
 }
-
-// func (b *Bufferer) Flush() error {
-
-// }s
-
-// func (b *Bufferer) Stop() error {
-
-// }

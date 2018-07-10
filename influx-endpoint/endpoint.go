@@ -274,16 +274,16 @@ func (server *HTTPInfluxServer) _post(bp client.BatchPoints) error {
 		}
 		server.Ping()
 		return err
-	} else {
-		server.DbCountersMutex.Lock()
-		server.PostCounter += uint64(len(bp.Points()))
-		if _, ok := server.DbCounters[bp.Database()]; !ok {
-			server.DbCounters[bp.Database()] = uint64(len(bp.Points()))
-		} else {
-			server.DbCounters[bp.Database()] += uint64(len(bp.Points()))
-		}
-		server.DbCountersMutex.Unlock()
 	}
+	server.DbCountersMutex.Lock()
+	server.PostCounter += uint64(len(bp.Points()))
+	if _, ok := server.DbCounters[bp.Database()]; !ok {
+		server.DbCounters[bp.Database()] = uint64(len(bp.Points()))
+	} else {
+		server.DbCounters[bp.Database()] += uint64(len(bp.Points()))
+	}
+	server.DbCountersMutex.Unlock()
+
 	<-server.concurrent
 	// at the moment, pass the post err as is
 	return err
@@ -309,6 +309,8 @@ func (server *HTTPInfluxServer) Post(bp client.BatchPoints) error {
 
 }
 
+// ProcessBacklog will run and periodically process the backlog
+// of batches that are written to disk.
 func (server *HTTPInfluxServer) ProcessBacklog(stop chan struct{}) error {
 	// processing 40 per minute by default
 	backlog := time.NewTicker(15 * time.Millisecond)
