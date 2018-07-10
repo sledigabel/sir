@@ -4,9 +4,9 @@ RUN mkdir -p /go/src/github.com/sledigabel
 ADD . /go/src/github.com/sledigabel/sir
 RUN go get -u github.com/golang/dep/...
 WORKDIR /go/src/github.com/sledigabel/sir/
+RUN dep ensure
 RUN go test -v -parallel 1 ./...
 WORKDIR /go/src/github.com/sledigabel/sir/cmd
-RUN dep ensure
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sir .
 
 FROM alpine:latest
