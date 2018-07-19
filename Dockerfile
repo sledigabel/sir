@@ -11,6 +11,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sir .
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
-WORKDIR /root/
+WORKDIR /
 COPY --from=0 /go/src/github.com/sledigabel/sir/cmd/sir .
+COPY --from=0 /go/src/github.com/sledigabel/sir/cmd/sir.conf .
 ENTRYPOINT ["./sir"]
