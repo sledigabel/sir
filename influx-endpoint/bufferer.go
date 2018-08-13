@@ -1,6 +1,7 @@
 package endpoint
 
 import (
+	"compress/zlib"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -34,6 +35,7 @@ type Bufferer struct {
 	Index          []*BufferFile
 	RootPath       string
 	FlushFrequency time.Duration
+	Compression    bool
 	Shutdown       chan struct{}
 	Lock           sync.Mutex
 }
@@ -115,6 +117,7 @@ func NewBufferer() *Bufferer {
 	b.Input = make(chan client.BatchPoints, bufferSizeMax)
 	b.FlushFrequency = 5 * time.Minute
 	b.Shutdown = make(chan struct{})
+	b.Compression = false
 	return &b
 }
 
@@ -213,7 +216,13 @@ func (b *Bufferer) Write(bp client.BatchPoints) error {
 		return err
 		// TODO: test and handle marshalling errors and delete file
 	}
-	_, err = f.Write(content)
+	if b.Compression {
+		w := zlib.NewWriter(f)
+		_, err = w.Write(content)
+		w.Close()
+	} else {
+		_, err = f.Write(content)
+	}
 	if err != nil {
 		// again handle here file delete
 		return err
@@ -269,10 +278,25 @@ func (b *Bufferer) Pop() (client.BatchPoints, error) {
 	if err != nil {
 		return nil, err
 	}
-	bf, err := ioutil.ReadAll(fd)
-	if err != nil {
-		return nil, err
+
+	var bf []byte
+	if b.Compression {
+		r, err := zlib.NewReader(fd)
+		if err != nil {
+			return nil, err
+		}
+		bf, err = ioutil.ReadAll(r)
+		if err != nil {
+			return nil, err
+		}
+		r.Close()
+	} else {
+		bf, err = ioutil.ReadAll(fd)
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	fd.Close()
 
 	if err = json.Unmarshal(bf, &bb); err != nil {

@@ -162,7 +162,6 @@ func TestEndpointMgmtNewStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error creating the 2 servers")
 	}
-	defer os.RemoveAll("test1")
 	go mgr.Run()
 	bp, err := mgr.Stats()
 	if err != nil {
@@ -176,6 +175,7 @@ func TestEndpointMgmtNewStats(t *testing.T) {
 	}
 	mgr.Shutdown <- struct{}{}
 	t.Log("Shutdown Completed")
+	os.RemoveAll("./test1")
 
 }
 

@@ -112,24 +112,25 @@ func (d duration) toTimeDuration() time.Duration {
 // HTTPInfluxServerConfig is the struct to
 // map influx servers from config items
 type HTTPInfluxServerConfig struct {
-	ServerName       string `toml:"server_name"`
-	Alias            string
-	DBregex          []string `toml:"db_regex"`
-	Username         string
-	Password         string
-	Precision        string
-	WriteConsistency string `toml:"write_consistency"`
-	Port             int
-	Timeout          duration
-	UnsafeSSL        bool `toml:"unsafe_ssl"`
-	Secure           bool
-	Disable          bool     `toml:"disable"`
-	ConcurrentRq     int      `toml:"max_concurrent_requests"`
-	PingFrequency    duration `toml:"ping_frequency"`
-	Debug            bool     `toml:"debug"`
-	Buffering        bool     `toml:"buffering"`
-	BufferPath       string   `toml:"buffer_path"`
-	BufferFlushFreq  duration `toml:"buffer_flush_frequency"`
+	ServerName        string `toml:"server_name"`
+	Alias             string
+	DBregex           []string `toml:"db_regex"`
+	Username          string
+	Password          string
+	Precision         string
+	WriteConsistency  string `toml:"write_consistency"`
+	Port              int
+	Timeout           duration
+	UnsafeSSL         bool `toml:"unsafe_ssl"`
+	Secure            bool
+	Disable           bool     `toml:"disable"`
+	ConcurrentRq      int      `toml:"max_concurrent_requests"`
+	PingFrequency     duration `toml:"ping_frequency"`
+	Debug             bool     `toml:"debug"`
+	Buffering         bool     `toml:"buffering"`
+	BufferPath        string   `toml:"buffer_path"`
+	BufferFlushFreq   duration `toml:"buffer_flush_frequency"`
+	BufferCompression bool     `toml:"buffer_compression"`
 }
 
 func (d *duration) UnmarshalText(text []byte) error {
@@ -202,6 +203,7 @@ func NewHTTPInfluxServerFromConfig(c *HTTPInfluxServerConfig) *HTTPInfluxServer 
 		} else {
 			new.Bufferer.FlushFrequency, _ = time.ParseDuration("10s")
 		}
+		new.Bufferer.Compression = c.BufferCompression
 	}
 	return new
 }
