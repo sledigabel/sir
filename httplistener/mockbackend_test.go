@@ -1,12 +1,15 @@
 package httplistener_test
 
 import (
+	"io/ioutil"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/influxdata/influxdb/client/v2"
 	"github.com/sledigabel/sir/httplistener"
+
+	"net/http"
 )
 
 // MockBE is a backend that stores all points
@@ -40,6 +43,10 @@ func (mbe *MockBE) Post(bp client.BatchPoints) error {
 	}
 
 	return nil
+}
+
+func (mbe *MockBE) Status() []byte {
+	return []byte("{\"mock\":\"active\"}")
 }
 
 func TestSubmitData(t *testing.T) {
@@ -91,5 +98,35 @@ func TestSubmitData(t *testing.T) {
 	t.Log("Stopping server")
 	h.Stop()
 	wg.Wait()
+
+}
+
+func TestStatus(t *testing.T) {
+
+	t.Log("Starting server")
+	h := httplistener.NewHTTP()
+	h.Addr = "localhost:19998"
+	m := NewMockBE()
+	h.BackendMgr = m
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	go func() {
+		err := h.Run()
+		if err != nil {
+			t.Fatalf("Found an error with server: %v", err)
+		}
+		wg.Done()
+	}()
+	time.Sleep(time.Second)
+	r, err := http.Get("http://localhost:19998/status")
+	if err != nil {
+		t.Fatalf("Could not connect to status endpoint: %v", err)
+	}
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("Status on Mock server is not successful: %v", err)
+	}
+	body, _ := ioutil.ReadAll(r.Body)
+	t.Logf("Status: %v", string(body))
 
 }

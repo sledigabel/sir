@@ -105,6 +105,11 @@ func TestEndpointMgmtNewRun(t *testing.T) {
 
 	go mgr.Run()
 	time.Sleep(time.Second)
+	s := string(mgr.Status())
+	if s != "{\"test1\":\"failed\",\"test2\":\"failed\"}" {
+		t.Fatalf("Status check failed: %v", s)
+	}
+	t.Logf("Status: %v", s)
 	mgr.Shutdown <- struct{}{}
 	t.Log("Shutdown Completed")
 
@@ -211,6 +216,11 @@ func TestEndpointMgmtNewSubmitStats(t *testing.T) {
 	fields, _ := bp.Points()[0].Fields()
 	if bp.Points()[0].Name() != "sir_backend" || fields["posted"].(int64) < 9 {
 		t.Fatalf("Metrics were not collected enough:\n%v", bp.Points()[0].String())
+	}
+
+	s := string(mgr_submit.Status())
+	if s != "{\"test1\":\"active\"}" {
+		t.Fatalf("Status check failed: %v", s)
 	}
 	mgr_submit.Shutdown <- struct{}{}
 	t.Log("Shutdown Completed")

@@ -22,6 +22,7 @@ const (
 // entity to relay metrics to
 type Backend interface {
 	Post(client.BatchPoints) error
+	Status() []byte
 }
 
 // HTTP is a relay for HTTP influxdb writes
@@ -125,6 +126,13 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Path == "/query" && r.Method == "GET" {
 		jsonError(w, http.StatusForbidden, "queries not allowed")
+		return
+	}
+
+	if r.URL.Path == "/status" && r.Method == "GET" {
+		w.Header().Add("X-InfluxDB-Version", "relay")
+		w.Write(h.BackendMgr.Status())
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 

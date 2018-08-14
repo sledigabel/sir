@@ -1,6 +1,7 @@
 package endpoint
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -157,6 +158,29 @@ func (mgr *HTTPInfluxServerMgr) Stats() (client.BatchPoints, error) {
 		}
 	}
 	return batch, err
+}
+
+// Status returns a json encoded status check
+func (mgr *HTTPInfluxServerMgr) Status() []byte {
+	state := make(map[string]string)
+	for k, v := range mgr.Endpoints {
+		switch v.Status {
+		case ServerStateInactive:
+			state[k] = "inactive"
+		case ServerStateActive:
+			state[k] = "active"
+		case ServerStateFailed:
+			state[k] = "failed"
+		case ServerStateStarting:
+			state[k] = "starting"
+		case ServerStateSuspended:
+			state[k] = "suspended"
+		case ServerStateDrop:
+			state[k] = "drop"
+		}
+	}
+	s, _ := json.Marshal(state)
+	return s
 }
 
 // StopAllServers triggers a stop on all
