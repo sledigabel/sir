@@ -131,8 +131,12 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Path == "/status" && r.Method == "GET" {
 		w.Header().Add("X-InfluxDB-Version", "relay")
-		w.Write(h.BackendMgr.Status())
 		w.WriteHeader(http.StatusOK)
+		if h.BackendMgr != nil {
+			w.Write(h.BackendMgr.Status())
+		} else {
+			w.Write([]byte("{}"))
+		}
 		return
 	}
 
