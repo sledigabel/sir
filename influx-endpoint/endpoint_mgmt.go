@@ -24,12 +24,14 @@ type Internal struct {
 // HTTPInfluxServerMgr is the struct
 // that manages multiple endpoints
 type HTTPInfluxServerMgr struct {
-	wg        sync.WaitGroup
-	Shutdown  chan struct{}
-	Telemetry Internal
-	Debug     bool
-	index     map[string][]*HTTPInfluxServer
-	Endpoints map[string]*HTTPInfluxServer
+	wg           sync.WaitGroup
+	Shutdown     chan struct{}
+	Telemetry    Internal
+	Debug        bool
+	index        map[string][]*HTTPInfluxServer
+	indexOffsets map[string]uint
+	indexLock    sync.Mutex
+	Endpoints    map[string]*HTTPInfluxServer
 }
 
 // NewHTTPInfluxServerMgr is the constructur
@@ -38,6 +40,8 @@ func NewHTTPInfluxServerMgr() *HTTPInfluxServerMgr {
 	m := HTTPInfluxServerMgr{}
 	m.Endpoints = make(map[string]*HTTPInfluxServer)
 	m.index = make(map[string][]*HTTPInfluxServer)
+	m.indexOffsets = make(map[string]uint)
+	m.indexLock = sync.Mutex{}
 	m.Shutdown = make(chan struct{})
 	m.Telemetry = Internal{}
 	m.Telemetry.Database = "internal"
@@ -192,16 +196,25 @@ func (mgr *HTTPInfluxServerMgr) StopAllServers() {
 	mgr.wg.Wait()
 }
 
+// Query transmits a query to the server that responds
+func (mgr *HTTPInfluxServerMgr) Query(q *client.Query) (*client.Response, error) {
+	db := q.Database
+
+}
+
 // Post relays the batch points to the post function
 // of each endpoint
 func (mgr *HTTPInfluxServerMgr) Post(bp client.BatchPoints) error {
 	endpoints, ok := mgr.index[bp.Database()]
 	if !ok {
 		endpoints = mgr.GetInfluxServerbyDB(bp.Database())
+		if len(endpoints) == 0 {
+			return fmt.Errorf("Database not found")
+		}
+		mgr.indexLock.Lock()
 		mgr.index[bp.Database()] = endpoints
-	}
-	if len(endpoints) == 0 {
-		return fmt.Errorf("No endpoint for db %v", bp.Database())
+		mgr.indexOffsets[bp.Database()] = 0
+		mgr.indexLock.Unlock()
 	}
 	var err error
 	for _, s := range endpoints {

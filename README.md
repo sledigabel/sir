@@ -21,7 +21,8 @@ TBD.
 
 ## TODO
 
-TBD.
+### Handle Retention Policies in endpoints
+At the moment it's expected to shard by DB only.
 
 ## Usage
 

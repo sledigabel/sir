@@ -3,9 +3,11 @@ package httplistener
 import (
 	"compress/gzip"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -124,8 +126,50 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.URL.Path == "/query" && r.Method == "GET" {
-		jsonError(w, http.StatusForbidden, "queries not allowed")
+	if r.URL.Path == "/query" {
+		if r.Method != "GET" {
+			w.Header().Add("X-InfluxDB-Version", "relay")
+			jsonError(w, http.StatusForbidden, "Queries supported only for SELECT and SHOW")
+			return
+		}
+		w.Header().Add("X-InfluxDB-Version", "relay")
+		// saving the query and passing it along
+		queryParams := r.URL.Query()
+		db := queryParams.Get("db")
+		if db == "" {
+			jsonError(w, http.StatusBadRequest, "missing parameter: db")
+			return
+		}
+		bd, _ := ioutil.ReadAll(r.Body)
+		log.Printf("Params:\n- db: %v\n- raw: %v\n- Body: %v", db, r.URL.RawQuery, string(bd))
+		log.Printf("Host: %v = %v", r.Host, r.Header)
+		r.Host = "127.0.0.1:19998"
+		log.Printf("Host: %v = %v", r.Host, r.Header)
+		queryRelay := &http.Client{}
+		u, _ := url.ParseRequestURI("http://127.0.0.1:19998")
+		body, _ := ioutil.ReadAll(r.Body)
+		newReq := &http.Request{
+			Method:        r.Method,
+			URL:           u,
+			Body:          newBody(body),
+			Header:        make(http.Header),
+			ContentLength: int64(len(body)),
+		}
+		for name, headers := range r.Header {
+			for _, h := range headers {
+				fmt.Printf("%v: %v\n", name, h)
+				newReq.Header.Set(name, h)
+			}
+		}
+		// resp, err := queryRelay.Do(r)
+		queryResp, err := queryRelay.Do(newReq)
+		log.Printf("error: %v", err)
+		log.Printf("%v / %v", queryResp.StatusCode, err)
+		// if err != nil {
+		// 	jsonError(w, http.StatusInternalServerError, "Couldn't reach server")
+		// }
+		// w.Write([]byte(resp.Status))
+		// w.WriteHeader(resp.StatusCode)
 		return
 	}
 

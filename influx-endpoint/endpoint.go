@@ -311,6 +311,12 @@ func (server *HTTPInfluxServer) Post(bp client.BatchPoints) error {
 
 }
 
+// Query allows to query the server with a given query
+// Assumes the server is up and running (no checks)
+func (server *HTTPInfluxServer) Query(q client.Query) (*client.Response, error) {
+	return server.Client.Query(q)
+}
+
 // ProcessBacklog will run and periodically process the backlog
 // of batches that are written to disk.
 func (server *HTTPInfluxServer) ProcessBacklog(stop chan struct{}) error {
